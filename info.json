@@ -1,0 +1,10 @@
+{
+  "name":"item-zoom",
+  "author":"DaveMcW",
+  "version":"1.1.0",
+  "title":"Item zoom",
+  "homepage":"",
+  "description":"Follow an item around your base, like in the Factorio trailer.",
+  "dependencies": ["base"],
+  "factorio_version": "1.1"
+}
