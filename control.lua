@@ -78,13 +78,14 @@ function on_tick_player(player, controller)
   local target = controller.entity
 
   -- Target was destroyed... but did something grab it?
-  if controller.entity_type == "item-entity" then
+  if not target.valid and controller.entity_type == "item-entity" then
     for _, grabber in pairs(controller.grabbers) do
-      if entity_contains_item(grabber.entity, controller.item) then
-        if grabber.entity.type == "inserter" then
-          target = grabber.entity
-          break
-        end
+      if grabber.entity.valid
+      and grabber.entity.type == "inserter"
+      and entity_contains_item(grabber.entity, controller.item)
+      and grabber.entity.held_stack.count > grabber.count then
+        target = grabber.entity
+        break
       end
     end
   end
@@ -98,7 +99,8 @@ function on_tick_player(player, controller)
   -- Did something grab the item from our target?
   if target.get_output_inventory() then
     for _, grabber in pairs(controller.grabbers) do
-      if entity_contains_item(grabber.entity, controller.item) then
+      if grabber.entity.valid
+      and entity_contains_item(grabber.entity, controller.item) then
         if grabber.entity.type == "inserter" then
           target = grabber.entity
           break
@@ -116,7 +118,8 @@ function on_tick_player(player, controller)
   if (target.type == "inserter" and not target.drop_target)
   or HAS_TRANSPORT_LINE[target] then
     for _, grabber in pairs(controller.grabbers) do
-      if grabber.entity.type == "inserter"
+      if grabber.entity.valid
+      and grabber.entity.type == "inserter"
       and entity_contains_item(grabber.entity, controller.item)
       and grabber.entity.held_stack.count > grabber.count then
         target = grabber.entity
@@ -145,24 +148,56 @@ function on_tick_player(player, controller)
 
     elseif target.type == "logistic-robot" then
       local found = target.surface.find_entities_filtered{
-        type = "logistic-chest",
+        type = "logistic-container",
         position = target.position,
         force = target.force,
         limit = 1,
       }[1]
-      if found and entity_contains_item(found, controller.item) then
-        target = found
+      if found then
+        if entity_contains_item(found, controller.item) then
+          target = found
+        else
+          -- Did an inserter grab the item in the same tick?
+          local inserters = found.surface.find_entities_filtered{
+            area = expand_box(found.bounding_box, INSERTER_SEARCH_DISTANCE),
+            type = {"inserter"},
+          }
+          for _, inserter in pairs(inserters) do
+            if inserter.pickup_target == found
+            and inserter.held_stack_position.x == inserter.pickup_position.x
+            and inserter.held_stack_position.y == inserter.pickup_position.y
+            and entity_contains_item(inserter, controller.item) then
+              target = inserter
+            end
+          end
+        end
       end
 
     elseif target.type == "construction-robot" then
       local found = target.surface.find_entities_filtered{
-        type = {"logistic-chest", "roboport"},
+        type = {"logistic-container", "roboport"},
         position = target.position,
         force = target.force,
         limit = 1,
       }[1]
-      if found and entity_contains_item(found, controller.item) then
-        target = found
+      if found then
+        if entity_contains_item(found, controller.item) then
+          target = found
+        else
+          -- Did an inserter grab the item in the same tick?
+          local inserters = found.surface.find_entities_filtered{
+            area = expand_box(found.bounding_box, INSERTER_SEARCH_DISTANCE),
+            type = {"inserter"},
+          }
+          for _, inserter in pairs(inserters) do
+            if inserter.pickup_target == found
+            and inserter.held_stack_position.x == inserter.pickup_position.x
+            and inserter.held_stack_position.y == inserter.pickup_position.y
+            and entity_contains_item(inserter, controller.item) then
+              target = inserter
+            end
+          end
+        end
       else
         -- Search for a new building too
         local prototype = game.item_prototypes[controller.item]
@@ -186,21 +221,24 @@ function on_tick_player(player, controller)
 
   if target.type == "inserter" then
     local progress = inserter_progress(target)
-
     local start_pos = target.pickup_position
     if target.pickup_target then
       start_pos = target.pickup_target.position
     end
-
     local end_pos = target.drop_position
     if target.drop_target then
       end_pos = target.drop_target.position
     end
-
+    -- Use progress to calculate a point on the line from end_pos to start_pos
     position = {
       x = end_pos.x + progress * (start_pos.x - end_pos.x),
       y = end_pos.y + progress * (start_pos.y - end_pos.y),
     }
+
+  elseif HAS_TRANSPORT_LINE[target.type] then
+    -- TODO: Calculate transport belt position
+
+
   end
 
   -- Teleport to the item position
@@ -234,14 +272,20 @@ function find_grabbers(entity)
   or HAS_TRANSPORT_LINE[entity.type]
   or (entity.type == "inserter" and not entity.drop_target)
   or entity.type == "item-entity" then
+
     local box = entity.bounding_box
-    if entity.type == "inserter" then
+
+    -- Custom bounding boxes for entities that can't be inserter targets
+    if entity.type == "item-entity" then
+      box = expand_box(box, 0.4)
+    elseif entity.type == "inserter" then
       local p = entity.drop_position
       box = {
-        left_top = {x = p.x - 0.3, y = p.y - 0.3},
-        right_bottom = {x = p.x + 0.3, y = p.y + 0.3},
+        left_top = {x = p.x - 0.4, y = p.y - 0.4},
+        right_bottom = {x = p.x + 0.4, y = p.y + 0.4},
       }
     end
+
     local inserters = entity.surface.find_entities_filtered{
       area = expand_box(box, INSERTER_SEARCH_DISTANCE),
       type = {"inserter"},
@@ -251,12 +295,16 @@ function find_grabbers(entity)
       if inserter.held_stack.valid_for_read then
         count = inserter.held_stack.count
       end
+
       if inserter.pickup_target == entity then
+        -- Found inserter target
         if count == 0 or HAS_TRANSPORT_LINE[entity.type] then
           table.insert(grabbers, {entity=inserter, count=count})
         end
+
       elseif (entity.type == "inserter" and not entity.drop_target)
       or entity.type == "item-entity" then
+        -- Search pickup_position for inserter target
         local p = inserter.pickup_position
         if p.x >= box.left_top.x
         and p.y >= box.left_top.y
@@ -269,10 +317,10 @@ function find_grabbers(entity)
   end
 
   -- Robots pulling from specific entities
-  if IS_ROBOT[entity.type] then
+  if entity.type == "logistic-container" or entity.type == "roboport" then
     local robots = entity.surface.find_entities_filtered{
       area = expand_box(entity.bounding_box, ROBOT_SEARCH_DISTANCE),
-      type = {"inserter"},
+      type = {"construction-robot", "logistic-robot"},
       force = entity.force,
     }
     for _, robot in pairs(robots) do
@@ -494,6 +542,61 @@ function shuffle(t)
       local j = math.random(i)
       t[i], t[j] = t[j], t[i]
   end
+end
+
+function get_belt_info(belt)
+  -- Straight belt
+  local type = "straight"
+  local start_pos = util.table.deepcopy(belt.position)
+  local end_pos = util.table.deepcopy(belt.position)
+  if belt.direction == defines.direction.north then
+    start_pos.y = belt.position.y + 0.5
+    end_pos.y = belt.position.y - 0.5
+  elseif belt.direction == defines.direction.east then
+    start_pos.x = belt.position.x - 0.5
+    end_pos.x = belt.position.x + 0.5
+  elseif belt.direction == defines.direction.south then
+    start_pos.y = belt.position.y - 0.5
+    end_pos.y = belt.position.y + 0.5
+  elseif belt.direction == defines.direction.west then
+    start_pos.x = belt.position.x + 0.5
+    end_pos.x = belt.position.x - 0.5
+  end
+
+  -- Curved belt
+  local inputs = belt.belt_neighbours.inputs
+  if #inputs == 1 then
+    if (belt.direction == defines.direction.north or belt.direction == defines.direction.south)
+    and inputs[1].position.x < belt.position.x
+    and (inputs[1].type ~= "splitter" or inputs[1].position.x == belt.position.x - 1) then
+      type = "curved"
+      start_pos = {x = belt.position.x - 0.5, y = belt.position.y}
+
+    elseif (belt.direction == defines.direction.north or belt.direction == defines.direction.south)
+    and inputs[1].position.x > belt.position.x
+    and (inputs[1].type ~= "splitter" or inputs[1].position.x == belt.position.x + 1) then
+      type = "curved"
+      start_pos = {x = belt.position.x + 0.5, y = belt.position.y}
+
+    elseif (belt.direction == defines.direction.east or belt.direction == defines.direction.west)
+    and inputs[1].position.y < belt.position.y
+    and (inputs[1].type ~= "splitter" or inputs[1].position.y == belt.position.y - 1) then
+      type = "curved"
+      start_pos = {x = belt.position.x, y = belt.position.y - 0.5}
+
+    elseif (belt.direction == defines.direction.east or belt.direction == defines.direction.west)
+    and inputs[1].position.y > belt.position.y
+    and (inputs[1].type ~= "splitter" or inputs[1].position.y == belt.position.y + 1) then
+      type = "curved"
+      start_pos = {x = belt.position.x, y = belt.position.y + 0.5}
+    end
+  end
+
+  return {
+    type = type,
+    start_pos = start_pos,
+    end_pos = end_pos,
+  }
 end
 
 script.on_init(on_init)
