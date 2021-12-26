@@ -553,7 +553,7 @@ end
 
 function get_belt_info(belt)
   -- Straight belt
-  local type = "straight"
+  local input_direction = belt.direction
   local start_pos = util.table.deepcopy(belt.position)
   local end_pos = util.table.deepcopy(belt.position)
   if belt.direction == defines.direction.north then
@@ -576,35 +576,116 @@ function get_belt_info(belt)
     if (belt.direction == defines.direction.north or belt.direction == defines.direction.south)
     and inputs[1].position.x < belt.position.x
     and (inputs[1].type ~= "splitter" or inputs[1].position.x == belt.position.x - 1) then
-      type = "curved"
+      input_direction = defines.direction.east
       start_pos = {x = belt.position.x - 0.5, y = belt.position.y}
 
     elseif (belt.direction == defines.direction.north or belt.direction == defines.direction.south)
     and inputs[1].position.x > belt.position.x
     and (inputs[1].type ~= "splitter" or inputs[1].position.x == belt.position.x + 1) then
-      type = "curved"
+      input_direction = defines.direction.west
       start_pos = {x = belt.position.x + 0.5, y = belt.position.y}
 
     elseif (belt.direction == defines.direction.east or belt.direction == defines.direction.west)
     and inputs[1].position.y < belt.position.y
     and (inputs[1].type ~= "splitter" or inputs[1].position.y == belt.position.y - 1) then
-      type = "curved"
+      input_direction = defines.direction.south
       start_pos = {x = belt.position.x, y = belt.position.y - 0.5}
 
     elseif (belt.direction == defines.direction.east or belt.direction == defines.direction.west)
     and inputs[1].position.y > belt.position.y
     and (inputs[1].type ~= "splitter" or inputs[1].position.y == belt.position.y + 1) then
-      type = "curved"
+      input_direction = defines.direction.north
       start_pos = {x = belt.position.x, y = belt.position.y + 0.5}
     end
   end
 
   return {
-    type = type,
+    input_direction = input_direction,
     start_pos = start_pos,
     end_pos = end_pos,
   }
 end
+
+function get_line_info(line)
+  local owner = line.owner
+  local start_pos = owner.position
+  local end_pos = owner.position
+  local length = 1
+
+  if owner.type == "transport-belt" then
+    local owner_info = get_belt_info(owner)
+    local line_index = 0
+    for i = 1, owner.get_max_transport_line_index() do
+      if line.line_equals(owner.get_transport_line(i)) then
+        line_index = i
+        break
+      end
+    end
+    start_pos = adjusted_line_pos(owner.position, owner_info.start_pos, owner_info.input_direction, line_index)
+    end_pos = adjusted_line_pos(owner.position, owner_info.end_pos, owner.direction, line_index)
+
+    local distance = math.abs(start_pos.x - end_pos.x) + math.abs(start_pos.y - end_pos.y)
+
+    -- Adjust length of curved belts
+    -- https://forums.factorio.com/viewtopic.php?p=554468#p554468
+    if distance < 1 then
+      length = 106 / 256
+    elseif distance > 1 then
+      length = 295 / 256
+    end
+  end
+
+  return {
+    start_pos = start_pos,
+    end_pos = end_pos,
+    length = length,
+  }
+end
+
+function adjusted_line_pos(belt_pos, pos, direction, line_index)
+  local result = util.table.deepcopy(pos)
+  local sign = 1
+  if direction == defines.direction.north
+  or direction == defines.direction.east then
+    sign = -1
+  end
+
+  -- North
+  if pos.x == belt_pos.x and pos.y < belt_pos.y then
+    if line_index == 1 then
+      result.x = result.x + sign * 0.25
+    elseif line_index == 2 then
+      result.x = result.x - sign * 0.25
+    end
+
+  -- South
+  elseif pos.x == belt_pos.x and pos.y > belt_pos.y then
+    if line_index == 1 then
+      result.x = result.x + sign * 0.25
+    elseif line_index == 2 then
+      result.x = result.x - sign * 0.25
+    end
+
+  -- East
+  elseif pos.y == belt_pos.y and pos.x > belt_pos.x then
+    if line_index == 1 then
+      result.y = result.y + sign * 0.25
+    elseif line_index == 2 then
+      result.y = result.y - sign * 0.25
+    end
+
+  -- West
+  elseif pos.y == belt_pos.y and pos.x < belt_pos.x then
+    if line_index == 1 then
+      result.y = result.y + sign * 0.25
+    elseif line_index == 2 then
+      result.y = result.y - sign * 0.25
+    end
+  end
+
+  return result
+end
+
 
 script.on_init(on_init)
 script.on_event(defines.events.on_tick, on_tick)
