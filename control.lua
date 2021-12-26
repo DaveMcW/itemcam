@@ -1,3 +1,10 @@
+-- Entity processing order:
+-- 1. Worker robot movement
+-- 2. Worker robot item transfer
+-- 3. Inserter movement
+-- 4. Inserter item transfer
+
+
 require "util"
 
 local INSERTER_SEARCH_DISTANCE = 5
@@ -101,21 +108,21 @@ function on_tick_player(player, controller)
     for _, grabber in pairs(controller.grabbers) do
       if grabber.entity.valid
       and entity_contains_item(grabber.entity, controller.item) then
-        if grabber.entity.type == "inserter" then
+        if grabber.entity.type == "inserter"
+        and grabber.entity.held_stack_position.x == grabber.entity.pickup_position.x
+        and grabber.entity.held_stack_position.y == grabber.entity.pickup_position.y then
           target = grabber.entity
           break
-        elseif IS_ROBOT[grabber.entity.type] then
-          if target.position.x == grabber.entity.position.x
-          and target.position.y == grabber.entity.position.y then
-            target = grabber.entity
-            break
-          end
+        elseif IS_ROBOT[grabber.entity.type]
+        and target.position.x == grabber.entity.position.x
+        and target.position.y == grabber.entity.position.y then
+          target = grabber.entity
+          break
         end
       end
     end
-  end
 
-  if (target.type == "inserter" and not target.drop_target)
+  elseif (target.type == "inserter" and not target.drop_target)
   or HAS_TRANSPORT_LINE[target] then
     for _, grabber in pairs(controller.grabbers) do
       if grabber.entity.valid
@@ -126,13 +133,14 @@ function on_tick_player(player, controller)
         break
       end
     end
-  end
 
   -- Did the target drop the item somwhere?
-  if entity_item_count(target, controller.item) < controller.count then
+  elseif entity_item_count(target, controller.item) < controller.count then
     if target.type == "inserter" then
-      if target.drop_target and entity_contains_item(target.drop_target, controller.item) then
-        target = target.drop_target
+      if target.drop_target then
+        if entity_contains_item(target.drop_target, controller.item) then
+          target = target.drop_target
+        end
       else
         -- Search for item on ground
         local items = target.surface.find_entities_filtered{
@@ -246,6 +254,8 @@ function on_tick_player(player, controller)
 
   -- Find potential entities that could grab the item next tick
   controller.grabbers = find_grabbers(target)
+
+  -- Save data for next tick
   controller.entity = target
   controller.entity_type = target.type
   controller.count = entity_item_count(target, controller.item)
@@ -277,13 +287,10 @@ function find_grabbers(entity)
 
     -- Custom bounding boxes for entities that can't be inserter targets
     if entity.type == "item-entity" then
-      box = expand_box(box, 0.4)
-    elseif entity.type == "inserter" then
+      box = tile_box(box)
+    elseif entity.type == "inserter" and not entity.drop_target then
       local p = entity.drop_position
-      box = {
-        left_top = {x = p.x - 0.4, y = p.y - 0.4},
-        right_bottom = {x = p.x + 0.4, y = p.y + 0.4},
-      }
+      box = tile_box({left_top = {x=p.x, y=p.y}, right_bottom = {x=p.x, y=p.y}})
     end
 
     local inserters = entity.surface.find_entities_filtered{
@@ -330,9 +337,12 @@ function find_grabbers(entity)
     end
   end
 
-  -- TODO: Loaders
-
   shuffle(grabbers)
+
+  if entity.type == "loader-1x1" or entity.type == "loader-1x2" then
+    -- TODO: Loaders
+  end
+
   return grabbers
 end
 
@@ -350,19 +360,7 @@ function inserter_progress(inserter)
   return math.abs(angle)
 end
 
-function pointOnLine(line1, line2, pt, line3, line4)
-  if line1.x == line2.x and line1.y == line2.y then return line3 end
-
-  local dy = line2.y - line1.y
-  local dx = line2.x - line1.x
-  local U = (dx*(pt.x - line1.x) + dy*(pt.y - line1.y)) / (dx*dx + dy*dy);
-  if U > 1 then U = 1 end
-  if U < 0 then U = 0 end
-  local r = {
-    x = line3.x + U * (line4.x - line3.x),
-    y = line3.y + U * (line4.y - line3.y),
-  }
-
+function draw_circle()
   rendering.draw_circle{
     surface = game.surfaces[1],
     target = r,
@@ -371,7 +369,6 @@ function pointOnLine(line1, line2, pt, line3, line4)
     width = 3,
     time_to_live = 2,
   }
-  return r;
 end
 
 function expand_box(box, extra_tiles)
@@ -380,6 +377,16 @@ function expand_box(box, extra_tiles)
   result.left_top.y = result.left_top.y - extra_tiles
   result.right_bottom.x = result.right_bottom.x + extra_tiles
   result.right_bottom.y = result.right_bottom.y + extra_tiles
+  return result
+end
+
+function tile_box(box)
+  -- Select every tile in the box, with a 1 pixel (1/256 tile) margin
+  local result = util.table.deepcopy(box)
+  result.left_top.x = math.floor(result.left_top.x) + 0.00390625
+  result.left_top.y = math.floor(result.left_top.y) + 0.00390625
+  result.right_bottom.x = math.ceil(result.right_bottom.x) - 0.00390625
+  result.right_bottom.y = math.ceil(result.right_bottom.y) - 0.00390625
   return result
 end
 
