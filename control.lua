@@ -1,8 +1,9 @@
 -- Entity processing order:
--- 1. Worker robot movement
--- 2. Worker robot item transfer
--- 3. Inserter movement
--- 4. Inserter item transfer
+-- 1. Transport belt movement/item transfer
+-- 2. Worker robot movement
+-- 3. Worker robot item transfer
+-- 4. Inserter movement
+-- 5. Inserter item transfer
 
 
 require "util"
@@ -122,8 +123,7 @@ function on_tick_player(player, controller)
       end
     end
 
-  elseif (target.type == "inserter" and not target.drop_target)
-  or HAS_TRANSPORT_LINE[target] then
+  elseif (target.type == "inserter" and not target.drop_target) then
     for _, grabber in pairs(controller.grabbers) do
       if grabber.entity.valid
       and grabber.entity.type == "inserter"
@@ -134,13 +134,23 @@ function on_tick_player(player, controller)
       end
     end
 
+  elseif HAS_TRANSPORT_LINE[target] then
+    for _, grabber in pairs(controller.grabbers) do
+      if grabber.entity.valid
+      and grabber.entity.type == "inserter"
+      and entity_contains_item(grabber.entity, controller.item)
+      and grabber.entity.held_stack.count > grabber.count then
+      -- TODO: Check held_stack_position vs belt progress
+        target = grabber.entity
+        break
+      end
+    end
+
   -- Did the target drop the item somwhere?
   elseif entity_item_count(target, controller.item) < controller.count then
     if target.type == "inserter" then
       if target.drop_target then
-        if entity_contains_item(target.drop_target, controller.item) then
-          target = target.drop_target
-        end
+        target = target.drop_target
       else
         -- Search for item on ground
         local items = target.surface.find_entities_filtered{
@@ -150,6 +160,7 @@ function on_tick_player(player, controller)
         for _, item in pairs(items) do
           if item.stack.name == controller.item then
             target = item
+            break
           end
         end
       end
@@ -165,18 +176,11 @@ function on_tick_player(player, controller)
         if entity_contains_item(found, controller.item) then
           target = found
         else
-          -- Did an inserter grab the item in the same tick?
-          local inserters = found.surface.find_entities_filtered{
-            area = expand_box(found.bounding_box, INSERTER_SEARCH_DISTANCE),
-            type = {"inserter"},
-          }
-          for _, inserter in pairs(inserters) do
-            if inserter.pickup_target == found
-            and inserter.held_stack_position.x == inserter.pickup_position.x
-            and inserter.held_stack_position.y == inserter.pickup_position.y
-            and entity_contains_item(inserter, controller.item) then
-              target = inserter
-            end
+          if entity_contains_item(found, controller.item) then
+            target = found
+          else
+            -- Did an inserter grab the item in the same tick?
+            target = find_picking_inserter(found, controller.item) or target
           end
         end
       end
@@ -193,21 +197,12 @@ function on_tick_player(player, controller)
           target = found
         else
           -- Did an inserter grab the item in the same tick?
-          local inserters = found.surface.find_entities_filtered{
-            area = expand_box(found.bounding_box, INSERTER_SEARCH_DISTANCE),
-            type = {"inserter"},
-          }
-          for _, inserter in pairs(inserters) do
-            if inserter.pickup_target == found
-            and inserter.held_stack_position.x == inserter.pickup_position.x
-            and inserter.held_stack_position.y == inserter.pickup_position.y
-            and entity_contains_item(inserter, controller.item) then
-              target = inserter
-            end
-          end
+          target = find_picking_inserter(found, controller.item) or target
         end
-      else
-        -- Search for a new building too
+      end
+
+      -- Search for a new building
+      if target.type == "construction-robot" then
         local prototype = game.item_prototypes[controller.item]
         if prototype.place_result then
           found = target.surface.find_entities_filtered{
@@ -271,6 +266,22 @@ function on_tick_player(player, controller)
     -- }
     -- for i = 1, 100000000 do end
     -- global.screenshot_count = global.screenshot_count + 1
+  end
+end
+
+-- Find an inserter on the first tick of its pickup animation
+function find_picking_inserter(entity, item)
+  local inserters = entity.surface.find_entities_filtered{
+    area = expand_box(entity.bounding_box, INSERTER_SEARCH_DISTANCE),
+    type = {"inserter"},
+  }
+  for _, inserter in pairs(inserters) do
+    if inserter.pickup_target == entity
+    and inserter.held_stack_position.x == inserter.pickup_position.x
+    and inserter.held_stack_position.y == inserter.pickup_position.y
+    and entity_contains_item(inserter, item) then
+      return inserter
+    end
   end
 end
 
