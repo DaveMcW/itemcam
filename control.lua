@@ -130,19 +130,76 @@ function on_tick_player(player, controller)
       and entity_contains_item(grabber.entity, controller.item)
       and grabber.entity.held_stack.count > grabber.count then
         target = grabber.entity
+        controller.pickup_position = target.held_stack_position
         break
       end
     end
 
-  elseif HAS_TRANSPORT_LINE[target] then
+  elseif HAS_TRANSPORT_LINE[target.type] then
     for _, grabber in pairs(controller.grabbers) do
       if grabber.entity.valid
       and grabber.entity.type == "inserter"
       and entity_contains_item(grabber.entity, controller.item)
       and grabber.entity.held_stack.count > grabber.count then
-      -- TODO: Check held_stack_position vs belt progress
+
+        -- TODO: Compare held_stack_position to belt item position
+
         target = grabber.entity
+        controller.pickup_position = target.held_stack_position
         break
+      end
+    end
+
+    -- Did the item move to a different belt?
+    if target.type == "underground-belt"
+    and target.belt_to_ground_type == "input" then
+      controller.belt_progress = controller.belt_progress + target.prototype.belt_speed
+      local output_belt = target.neighbours
+      if output_belt then
+        local length = util.distance(target.position, output_belt.position) + 0.5
+        if controller.belt_progress >= length
+        or controller.line.get_item_count(controller.item) == 0 then
+          -- Find new line
+          local output_line = get_underground_output_line(controller.line)
+          if output_line.get_item_count(controller.item) > 0 then
+            -- Reset progress
+            controller.belt_progress = controller.belt_progress - length
+            if controller.belt_progress > target.prototype.belt_speed
+            or controller.belt_progress < 0 then
+              controller.belt_progress = 0
+            end
+            controller.line = output_line
+            target = output_belt
+          end
+        end
+      elseif controller.belt_progress > 0.5 then
+        -- Dead end
+        controller.belt_progress = 0.5
+      end
+
+    elseif target.type == "linked-belt"
+    and target.linked_belt_type == "input" then
+
+
+    elseif HAS_TRANSPORT_LINE[target.type] then
+      local info = get_line_info(controller.line)
+      if controller.belt_progress < info.length then
+        controller.belt_progress = controller.belt_progress + target.prototype.belt_speed
+      end
+      if controller.belt_progress >= info.length
+      or controller.line.get_item_count(controller.item) == 0 then
+        -- Find new belt
+        local output_line = get_output_line(controller.line)
+        if output_line and output_line.get_item_count(controller.item) > 0 then
+          -- Reset progress
+          controller.belt_progress = controller.belt_progress - info.length
+          if controller.belt_progress > target.prototype.belt_speed
+          or controller.belt_progress < 0 then
+            controller.belt_progress = 0
+          end
+          controller.line = output_line
+          target = output_line.owner
+        end
       end
     end
 
@@ -151,6 +208,7 @@ function on_tick_player(player, controller)
     if target.type == "inserter" then
       if target.drop_target then
         target = target.drop_target
+        find_transport_line(target, item, controller)
       else
         -- Search for item on ground
         local items = target.surface.find_entities_filtered{
@@ -217,32 +275,44 @@ function on_tick_player(player, controller)
         end
       end
     end
+
   end
 
-  -- Calculate item position
+  -- Item position
   local position = target.position
+  local belt_progress = nil
+  if HAS_TRANSPORT_LINE[target.type] then
+    belt_progress = controller.belt_progress or 0
+  end
 
   if target.type == "inserter" then
+    -- Calculate a point on the line from drop_position to pickup_position
     local progress = inserter_progress(target)
-    local start_pos = target.pickup_position
-    if target.pickup_target then
-      start_pos = target.pickup_target.position
-    end
-    local end_pos = target.drop_position
-    if target.drop_target then
-      end_pos = target.drop_target.position
-    end
-    -- Use progress to calculate a point on the line from end_pos to start_pos
+    local start_pos = controller.pickup_position or (target.pickup_target and target.pickup_target.position) or target.pickup_position
+    local end_pos = (target.drop_target and target.drop_target.position) or target.drop_position
     position = {
       x = end_pos.x + progress * (start_pos.x - end_pos.x),
       y = end_pos.y + progress * (start_pos.y - end_pos.y),
     }
 
   elseif HAS_TRANSPORT_LINE[target.type] then
-    -- TODO: Calculate transport belt position
-
-
+    -- Calculate a point on the transport line
+    local info = get_line_info(controller.line)
+    local progress = controller.belt_progress / info.length
+    position = {
+      x = info.start_pos.x + progress * (info.end_pos.x - info.start_pos.x),
+      y = info.start_pos.y + progress * (info.end_pos.y - info.start_pos.y),
+    }
   end
+
+  -- rendering.draw_circle{
+  --   surface = game.surfaces[1],
+  --   target = position,
+  --   color = {r=1, g=0, b=0, a=1},
+  --   radius = 0.2,
+  --   width = 3,
+  --   time_to_live = 2,
+  -- }
 
   -- Teleport to the item position
   player.teleport(position, target.surface)
@@ -254,6 +324,10 @@ function on_tick_player(player, controller)
   controller.entity = target
   controller.entity_type = target.type
   controller.count = entity_item_count(target, controller.item)
+  controller.belt_progress = belt_progress
+  if target.type ~= "inserter" then
+    controller.pickup_position = nil
+  end
 
   -- Take screenshots
   if global.screenshot_count < 100 then
@@ -357,6 +431,47 @@ function find_grabbers(entity)
   return grabbers
 end
 
+function find_transport_line(entity, item, controller)
+  if not HAS_TRANSPORT_LINE[entity.type] then return end
+  for i = 1, entity.get_max_transport_line_index() do
+    local line = entity.get_transport_line(i)
+    if line.get_item_count(controller.item) > 0 then
+      controller.line = line
+      controller.belt_progress = 0.5
+      break
+    end
+  end
+end
+
+function get_output_line(line)
+  -- First search the belt entity for outputs
+  for _, belt in pairs(line.owner.belt_neighbours.outputs) do
+    for i = 1, belt.get_max_transport_line_index() do
+      local output_line = belt.get_transport_line(i)
+      if line.line_equals(output_line) then
+        return output_line
+      end
+    end
+  end
+  -- If the output line does not match because the transport line changed,
+  -- use LuaTransportBelt.output_lines to find the new transport line
+  return line.output_lines[1]
+end
+
+function get_underground_output_line(line)
+  -- First search the belt entity for outputs
+  local belt = line.owner.neighbours
+  for i = 1, belt.get_max_transport_line_index() do
+    local output_line = belt.get_transport_line(i)
+    if line.line_equals(output_line) then
+      return output_line
+    end
+  end
+  -- If the output line does not match because the transport line changed,
+  -- use LuaTransportBelt.output_lines to find the new transport line
+  return line.output_lines[1]
+end
+
 -- Return normalized distance from drop_position
 function inserter_progress(inserter)
   -- Calculate angle between held_stack_position and drop_position
@@ -406,20 +521,18 @@ function start_item_zoom(player, item, entity)
   player.clear_cursor()
 
   -- Save current controller
-  local character_name = nil
-  if player.character then
-    character_name = player.character.name
-  end
-  global.zoom_controllers[player.index] = {
+  local controller = {
     item = item,
     entity = entity,
     entity_type = entity.type,
     controller_type = player.controller_type,
     character = player.character,
-    character_name = character_name,
+    character_name = player.character and player.character.name,
     grabbers = {},
     count = entity_item_count(entity, item),
   }
+  find_transport_line(entity, item, controller)
+  global.zoom_controllers[player.index] = controller
 
   -- Swap to god controller
   player.set_controller{type = defines.controllers.god}
@@ -547,6 +660,7 @@ function recipe_contains_item(recipe, item)
 end
 
 function entity_item_count(entity, item)
+  if HAS_TRANSPORT_LINE[entity] then return 0 end
   local count = entity.get_item_count(item)
   if entity.type == "inserter" and entity.held_stack.valid_for_read then
     count = entity.held_stack.count
@@ -583,7 +697,7 @@ function get_belt_info(belt)
 
   -- Curved belt
   local inputs = belt.belt_neighbours.inputs
-  if #inputs == 1 then
+  if belt.type == "transport-belt" and #inputs == 1 then
     if (belt.direction == defines.direction.north or belt.direction == defines.direction.south)
     and inputs[1].position.x < belt.position.x
     and (inputs[1].type ~= "splitter" or inputs[1].position.x == belt.position.x - 1) then
@@ -623,7 +737,7 @@ function get_line_info(line)
   local end_pos = owner.position
   local length = 1
 
-  if owner.type == "transport-belt" then
+  if owner.type == "transport-belt" or owner.type == "underground-belt" then
     local owner_info = get_belt_info(owner)
     local line_index = 0
     for i = 1, owner.get_max_transport_line_index() do
@@ -632,18 +746,47 @@ function get_line_info(line)
         break
       end
     end
-    start_pos = adjusted_line_pos(owner.position, owner_info.start_pos, owner_info.input_direction, line_index)
-    end_pos = adjusted_line_pos(owner.position, owner_info.end_pos, owner.direction, line_index)
 
-    local distance = math.abs(start_pos.x - end_pos.x) + math.abs(start_pos.y - end_pos.y)
+    if owner.type == "transport-belt" then
+      start_pos = adjusted_line_pos(owner.position, owner_info.start_pos, owner_info.input_direction, line_index)
+      end_pos = adjusted_line_pos(owner.position, owner_info.end_pos, owner.direction, line_index)
+      -- Adjust length of curved belts
+      -- https://forums.factorio.com/viewtopic.php?p=554468#p554468
+      local distance = math.abs(start_pos.x - end_pos.x) + math.abs(start_pos.y - end_pos.y)
+      if distance < 1 then
+        length = 106 / 256
+      elseif distance > 1 then
+        length = 295 / 256
+      end
 
-    -- Adjust length of curved belts
-    -- https://forums.factorio.com/viewtopic.php?p=554468#p554468
-    if distance < 1 then
-      length = 106 / 256
-    elseif distance > 1 then
-      length = 295 / 256
+    elseif owner.type == "underground-belt" and owner.belt_to_ground_type == "input" then
+      length = 0.5
+      start_pos = adjusted_line_pos(owner.position, owner_info.start_pos, owner.direction, line_index)
+      end_pos = adjusted_line_pos(owner_info.end_pos, owner.position, owner.direction, line_index)
+      if owner.neighbours then
+        -- Extend length to reach the exit
+        local distance = util.distance(owner.position, owner.neighbours.position)
+        local dx = 0
+        local dy = 0
+        if owner.direction == defines.direction.north then
+          dy = -1
+        elseif owner.direction == defines.direction.south then
+          dy = 1
+        elseif owner.direction == defines.direction.east then
+          dx = 1
+        elseif owner.direction == defines.direction.west then
+          dx = -1
+        end
+        end_pos = {x = end_pos.x + dx * distance, y = end_pos.y + dy * distance}
+        length = length + distance
+      end
+
+    elseif owner.type == "underground-belt" and owner.belt_to_ground_type == "output" then
+      length = 0.5
+      start_pos = adjusted_line_pos(owner_info.start_pos, owner.position, owner.direction, line_index)
+      end_pos = adjusted_line_pos(owner.position, owner_info.end_pos, owner.direction, line_index)
     end
+
   end
 
   return {
