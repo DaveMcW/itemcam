@@ -180,7 +180,8 @@ function on_tick_player(player, controller)
         -- Pick a random belt
         shuffle(output_lines)
         for i = 1, #output_lines do
-          if output_lines[i].get_item_count(controller.item) > 0 then
+          if output_lines[i] ~= controller.line
+          and output_lines[i].get_item_count(controller.item) > 0 then
             output_line = output_lines[i]
             break
           end
