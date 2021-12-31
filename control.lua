@@ -8,7 +8,7 @@
 
 require "util"
 
-local DEBUG = false
+local DEBUG = true
 local INSERTER_SEARCH_DISTANCE = 5
 local ROBOT_SEARCH_DISTANCE = 5
 local HAS_TRANSPORT_LINE = {
@@ -816,7 +816,7 @@ function get_line_info(line, belt)
   elseif belt.type == "underground-belt" and belt.belt_to_ground_type == "output"
   and line_index > 2 then
     if DEBUG then
-      game.print("Item Zoom: I don't think this belt line is used.")
+      game.print("Item Zoom: I don't think this belt line is used. [gps="..belt.position.x..","..belt.position.y.."]")
     end
     length = 0.5
     start_pos = line_position(belt_info.start_pos, belt.direction, line_index)
@@ -824,7 +824,7 @@ function get_line_info(line, belt)
     end_pos.y = start_pos.y + DY[belt.direction] * length
 
   elseif belt.type == "splitter" and line_index <= 4 then
-    -- Adjust length of input buffer
+    -- Input buffer takes up most of the belt
     -- https://forums.factorio.com/viewtopic.php?p=554468#p554468
     length = 179 / 256
     local position = belt_info.start_pos
@@ -835,8 +835,8 @@ function get_line_info(line, belt)
     position.x = position.x - DY[belt.direction] * sign * 0.5
     position.y = position.y + DX[belt.direction] * sign * 0.5
     start_pos = line_position(position, belt.direction, line_index)
-    end_pos.x = start_pos.x + DX[belt.direction] * 0.7
-    end_pos.y = start_pos.y + DY[belt.direction] * 0.7
+    end_pos.x = start_pos.x + DX[belt.direction] * length
+    end_pos.y = start_pos.y + DY[belt.direction] * length
 
   elseif belt.type == "splitter" and line_index > 4 then
     length = 77 / 256
@@ -848,8 +848,8 @@ function get_line_info(line, belt)
     position.x = position.x - DY[belt.direction] * sign * 0.5
     position.y = position.y + DX[belt.direction] * sign * 0.5
     end_pos = line_position(position, belt.direction, line_index)
-    start_pos.x = end_pos.x - DX[belt.direction] * 0.3
-    start_pos.y = end_pos.y - DY[belt.direction] * 0.3
+    start_pos.x = end_pos.x - DX[belt.direction] * length
+    start_pos.y = end_pos.y - DY[belt.direction] * length
   end
 
   return {
