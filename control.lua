@@ -167,7 +167,7 @@ function on_tick_player(player, controller)
 
     -- Did the item move to a different belt?
     if HAS_TRANSPORT_LINE[target.type] then
-      info = get_line_info(controller.line)
+      info = get_line_info(controller.line, target)
       -- Stop at the end of the belt
       if controller.belt_progress < info.length then
         controller.belt_progress = controller.belt_progress + target.prototype.belt_speed
@@ -175,7 +175,7 @@ function on_tick_player(player, controller)
       -- Find new belt
       if controller.belt_progress >= info.length
       or controller.line.get_item_count(controller.item) == 0 then
-        local output_line = get_output_line(controller.line)
+        local output_line = get_output_line(controller.line, target)
         if output_line and output_line.get_item_count(controller.item) > 0 then
           -- Reset progress
           controller.belt_progress = controller.belt_progress - info.length
@@ -281,7 +281,7 @@ function on_tick_player(player, controller)
 
   elseif HAS_TRANSPORT_LINE[target.type] then
     if not info then
-      info = get_line_info(controller.line)
+      info = get_line_info(controller.line, target)
     end
     -- Calculate a point on the transport line
     local progress = controller.belt_progress / info.length
@@ -439,14 +439,14 @@ function find_transport_line(entity, item, controller)
   end
 end
 
-function get_output_line(line)
-  local index = get_line_index(line)
+function get_output_line(line, belt)
+  local index = get_line_index(line, belt)
   -- 1. Search inside the belt entity
-  if line.owner.type == "underground-belt"
-  and line.owner.belt_to_ground_type == "input"
+  if belt.type == "underground-belt"
+  and belt.belt_to_ground_type == "input"
   and index <= 2 then
     for i = 3, 4 do
-      local output_line = line.owner.get_transport_line(i)
+      local output_line = belt.get_transport_line(i)
       if line ~= output_line and line.line_equals(output_line) then
         return output_line
       end
@@ -454,12 +454,12 @@ function get_output_line(line)
   end
 
   -- 2. Search the underground exit
-  if line.owner.type == "underground-belt"
-  and line.owner.belt_to_ground_type == "input"
+  if belt.type == "underground-belt"
+  and belt.belt_to_ground_type == "input"
   and index > 2
-  and line.owner.neighbours then
+  and belt.neighbours then
     for i = 1, 2 do
-      local output_line = line.owner.neighbours.get_transport_line(i)
+      local output_line = belt.neighbours.get_transport_line(i)
       if line.line_equals(output_line) then
         return output_line
       end
@@ -467,7 +467,7 @@ function get_output_line(line)
   end
 
   -- 3. Search the belt entity outputs
-  for _, belt in pairs(line.owner.belt_neighbours.outputs) do
+  for _, belt in pairs(belt.belt_neighbours.outputs) do
     for i = 1, belt.get_max_transport_line_index() do
       local output_line = belt.get_transport_line(i)
       if line.line_equals(output_line) then
@@ -478,20 +478,6 @@ function get_output_line(line)
 
   -- 4. If the line does not match because the internal transport line changed,
   -- use LuaTransportBelt.output_lines to find the new line
-  return line.output_lines[1]
-end
-
-function get_underground_output_line(line)
-  -- First search the belt entity for outputs
-  local belt = line.owner.neighbours
-  for i = 1, belt.get_max_transport_line_index() do
-    local output_line = belt.get_transport_line(i)
-    if line.line_equals(output_line) then
-      return output_line
-    end
-  end
-  -- If the output line does not match because the transport line changed,
-  -- use LuaTransportBelt.output_lines to find the new transport line
   return line.output_lines[1]
 end
 
@@ -745,17 +731,16 @@ function get_belt_info(belt)
   }
 end
 
-function get_line_info(line)
-  local owner = line.owner
-  local owner_info = get_belt_info(owner)
-  local start_pos = owner.position
-  local end_pos = owner.position
+function get_line_info(line, belt)
+  local belt_info = get_belt_info(belt)
+  local start_pos = belt.position
+  local end_pos = belt.position
   local length = 1
-  local line_index = get_line_index(line)
+  local line_index = get_line_index(line, belt)
 
-  if owner.type == "transport-belt" then
-    start_pos = adjusted_line_pos(owner.position, owner_info.start_pos, owner_info.input_direction, line_index)
-    end_pos = adjusted_line_pos(owner.position, owner_info.end_pos, owner.direction, line_index)
+  if belt.type == "transport-belt" then
+    start_pos = adjusted_line_pos(belt.position, belt_info.start_pos, belt_info.input_direction, line_index)
+    end_pos = adjusted_line_pos(belt.position, belt_info.end_pos, belt.direction, line_index)
     -- Adjust length of curved belts
     -- https://forums.factorio.com/viewtopic.php?p=554468#p554468
     local distance = math.abs(start_pos.x - end_pos.x) + math.abs(start_pos.y - end_pos.y)
@@ -765,39 +750,39 @@ function get_line_info(line)
       length = 295 / 256
     end
 
-  elseif owner.type == "underground-belt" and owner.belt_to_ground_type == "input"
+  elseif belt.type == "underground-belt" and belt.belt_to_ground_type == "input"
   and line_index <= 2 then
     length = 0.5
-    start_pos = adjusted_line_pos(owner.position, owner_info.start_pos, owner.direction, line_index)
-    end_pos = adjusted_line_pos(owner_info.end_pos, owner.position, owner.direction, line_index)
+    start_pos = adjusted_line_pos(belt.position, belt_info.start_pos, belt.direction, line_index)
+    end_pos = adjusted_line_pos(belt_info.end_pos, belt.position, belt.direction, line_index)
 
-  elseif owner.type == "underground-belt" and owner.belt_to_ground_type == "input"
+  elseif belt.type == "underground-belt" and belt.belt_to_ground_type == "input"
   and line_index > 2 then
     length = 0.5
-    start_pos = adjusted_line_pos(owner_info.start_pos, owner.position, owner.direction, line_index)
-    if owner.neighbours then
+    start_pos = adjusted_line_pos(belt_info.start_pos, belt.position, belt.direction, line_index)
+    if belt.neighbours then
       -- Extend length to meet the paired underground belt
-      length = util.distance(owner.position, owner.neighbours.position)
-      end_pos.x = start_pos.x + DX[owner.direction] * length
-      end_pos.y = start_pos.y + DY[owner.direction] * length
+      length = util.distance(belt.position, belt.neighbours.position)
+      end_pos.x = start_pos.x + DX[belt.direction] * length
+      end_pos.y = start_pos.y + DY[belt.direction] * length
     else
-      end_pos = adjusted_line_pos(owner.position, owner_info.end_pos, owner.direction, line_index)
+      end_pos = adjusted_line_pos(belt.position, belt_info.end_pos, belt.direction, line_index)
     end
 
-  elseif owner.type == "underground-belt" and owner.belt_to_ground_type == "output"
+  elseif belt.type == "underground-belt" and belt.belt_to_ground_type == "output"
   and line_index <= 2 then
     length = 0.5
-    start_pos = adjusted_line_pos(owner_info.start_pos, owner.position, owner.direction, line_index)
-    end_pos = adjusted_line_pos(owner.position, owner_info.end_pos, owner.direction, line_index)
+    start_pos = adjusted_line_pos(belt_info.start_pos, belt.position, belt.direction, line_index)
+    end_pos = adjusted_line_pos(belt.position, belt_info.end_pos, belt.direction, line_index)
 
-  elseif owner.type == "underground-belt" and owner.belt_to_ground_type == "output"
+  elseif belt.type == "underground-belt" and belt.belt_to_ground_type == "output"
   and line_index > 2 then
     if DEBUG then
       game.print("Item Zoom: I don't think this belt line is used.")
     end
     length = 0.5
-    start_pos = adjusted_line_pos(owner.position, owner_info.start_pos, owner.direction, line_index)
-    end_pos = adjusted_line_pos(owner_info.end_pos, owner.position, owner.direction, line_index)
+    start_pos = adjusted_line_pos(belt.position, belt_info.start_pos, belt.direction, line_index)
+    end_pos = adjusted_line_pos(belt_info.end_pos, belt.position, belt.direction, line_index)
   end
 
   return {
@@ -808,10 +793,9 @@ function get_line_info(line)
   }
 end
 
-function get_line_index(line)
-  local owner = line.owner
-  for i = 1, owner.get_max_transport_line_index() do
-    if line == owner.get_transport_line(i) then
+function get_line_index(line, belt)
+  for i = 1, belt.get_max_transport_line_index() do
+    if line == belt.get_transport_line(i) then
       return i
     end
   end
