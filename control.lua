@@ -868,5 +868,3 @@ script.on_event(defines.events.on_tick, on_tick)
 script.on_event(defines.events.on_player_selected_area, on_player_selected_area)
 script.on_event(defines.events.on_player_alt_selected_area, on_player_selected_area)
 script.on_event(defines.events.on_lua_shortcut, on_lua_shortcut)
-
-
