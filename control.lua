@@ -8,6 +8,7 @@
 
 require "util"
 
+local DEBUG = true
 local INSERTER_SEARCH_DISTANCE = 5
 local ROBOT_SEARCH_DISTANCE = 5
 local HAS_TRANSPORT_LINE = {
@@ -21,6 +22,18 @@ local HAS_TRANSPORT_LINE = {
 local IS_ROBOT = {
   ["construction-robot"] = 1,
   ["logistic-robot"] = 1,
+}
+local DX = {
+  [defines.direction.north] = 0,
+  [defines.direction.east] = 1,
+  [defines.direction.south] = 0,
+  [defines.direction.west] = -1,
+}
+local DY = {
+  [defines.direction.north] = -1,
+  [defines.direction.east] = 0,
+  [defines.direction.south] = 1,
+  [defines.direction.west] = 0,
 }
 
 function on_init()
@@ -151,44 +164,15 @@ function on_tick_player(player, controller)
     end
 
     -- Did the item move to a different belt?
-    if target.type == "underground-belt"
-    and target.belt_to_ground_type == "input" then
-      controller.belt_progress = controller.belt_progress + target.prototype.belt_speed
-      local output_belt = target.neighbours
-      if output_belt then
-        local length = util.distance(target.position, output_belt.position) + 0.5
-        if controller.belt_progress >= length
-        or controller.line.get_item_count(controller.item) == 0 then
-          -- Find new line
-          local output_line = get_underground_output_line(controller.line)
-          if output_line.get_item_count(controller.item) > 0 then
-            -- Reset progress
-            controller.belt_progress = controller.belt_progress - length
-            if controller.belt_progress > target.prototype.belt_speed
-            or controller.belt_progress < 0 then
-              controller.belt_progress = 0
-            end
-            controller.line = output_line
-            target = output_belt
-          end
-        end
-      elseif controller.belt_progress > 0.5 then
-        -- Dead end
-        controller.belt_progress = 0.5
-      end
-
-    elseif target.type == "linked-belt"
-    and target.linked_belt_type == "input" then
-
-
-    elseif HAS_TRANSPORT_LINE[target.type] then
+    if HAS_TRANSPORT_LINE[target.type] then
       local info = get_line_info(controller.line)
+      -- Stop at the end of the belt
       if controller.belt_progress < info.length then
         controller.belt_progress = controller.belt_progress + target.prototype.belt_speed
       end
+      -- Find new belt
       if controller.belt_progress >= info.length
       or controller.line.get_item_count(controller.item) == 0 then
-        -- Find new belt
         local output_line = get_output_line(controller.line)
         if output_line and output_line.get_item_count(controller.item) > 0 then
           -- Reset progress
@@ -197,6 +181,7 @@ function on_tick_player(player, controller)
           or controller.belt_progress < 0 then
             controller.belt_progress = 0
           end
+          -- Move to new belt
           controller.line = output_line
           target = output_line.owner
         end
@@ -303,16 +288,26 @@ function on_tick_player(player, controller)
       x = info.start_pos.x + progress * (info.end_pos.x - info.start_pos.x),
       y = info.start_pos.y + progress * (info.end_pos.y - info.start_pos.y),
     }
-  end
 
-  -- rendering.draw_circle{
-  --   surface = game.surfaces[1],
-  --   target = position,
-  --   color = {r=1, g=0, b=0, a=1},
-  --   radius = 0.2,
-  --   width = 3,
-  --   time_to_live = 2,
-  -- }
+    if DEBUG then
+      rendering.draw_circle{
+        surface = target.surface,
+        target = info.start_pos,
+        color = {r=1, g=0, b=0, a=1},
+        radius = 0.2,
+        width = 2,
+        time_to_live = 2,
+      }
+      rendering.draw_circle{
+        surface = target.surface,
+        target = info.end_pos,
+        color = {r=1, g=1, b=0, a=1},
+        radius = 0.2,
+        width = 2,
+        time_to_live = 2,
+      }
+    end
+  end
 
   -- Teleport to the item position
   player.teleport(position, target.surface)
@@ -444,7 +439,33 @@ function find_transport_line(entity, item, controller)
 end
 
 function get_output_line(line)
-  -- First search the belt entity for outputs
+  local index = get_line_index(line)
+  -- 1. Search inside the belt entity
+  if line.owner.type == "underground-belt"
+  and line.owner.belt_to_ground_type == "input"
+  and index <= 2 then
+    for i = 3, 4 do
+      local output_line = line.owner.get_transport_line(i)
+      if line ~= output_line and line.line_equals(output_line) then
+        return output_line
+      end
+    end
+  end
+
+  -- 2. Search the underground exit
+  if line.owner.type == "underground-belt"
+  and line.owner.belt_to_ground_type == "input"
+  and index > 2
+  and line.owner.neighbours then
+    for i = 1, 2 do
+      local output_line = line.owner.neighbours.get_transport_line(i)
+      if line.line_equals(output_line) then
+        return output_line
+      end
+    end
+  end
+
+  -- 3. Search the belt entity outputs
   for _, belt in pairs(line.owner.belt_neighbours.outputs) do
     for i = 1, belt.get_max_transport_line_index() do
       local output_line = belt.get_transport_line(i)
@@ -453,8 +474,9 @@ function get_output_line(line)
       end
     end
   end
-  -- If the output line does not match because the transport line changed,
-  -- use LuaTransportBelt.output_lines to find the new transport line
+
+  -- 4. If the line does not match because the internal transport line changed,
+  -- use LuaTransportBelt.output_lines to find the new line
   return line.output_lines[1]
 end
 
@@ -677,52 +699,39 @@ function shuffle(t)
 end
 
 function get_belt_info(belt)
-  -- Straight belt
   local input_direction = belt.direction
   local start_pos = util.table.deepcopy(belt.position)
   local end_pos = util.table.deepcopy(belt.position)
-  if belt.direction == defines.direction.north then
-    start_pos.y = belt.position.y + 0.5
-    end_pos.y = belt.position.y - 0.5
-  elseif belt.direction == defines.direction.east then
-    start_pos.x = belt.position.x - 0.5
-    end_pos.x = belt.position.x + 0.5
-  elseif belt.direction == defines.direction.south then
-    start_pos.y = belt.position.y - 0.5
-    end_pos.y = belt.position.y + 0.5
-  elseif belt.direction == defines.direction.west then
-    start_pos.x = belt.position.x + 0.5
-    end_pos.x = belt.position.x - 0.5
-  end
 
-  -- Curved belt
+  -- Curved belt changes input direction
   local inputs = belt.belt_neighbours.inputs
   if belt.type == "transport-belt" and #inputs == 1 then
-    if (belt.direction == defines.direction.north or belt.direction == defines.direction.south)
+    if DX[belt.direction] == 0
     and inputs[1].position.x < belt.position.x
     and (inputs[1].type ~= "splitter" or inputs[1].position.x == belt.position.x - 1) then
       input_direction = defines.direction.east
-      start_pos = {x = belt.position.x - 0.5, y = belt.position.y}
 
-    elseif (belt.direction == defines.direction.north or belt.direction == defines.direction.south)
+    elseif DX[belt.direction] == 0
     and inputs[1].position.x > belt.position.x
     and (inputs[1].type ~= "splitter" or inputs[1].position.x == belt.position.x + 1) then
       input_direction = defines.direction.west
-      start_pos = {x = belt.position.x + 0.5, y = belt.position.y}
 
-    elseif (belt.direction == defines.direction.east or belt.direction == defines.direction.west)
+    elseif DY[belt.direction] == 0
     and inputs[1].position.y < belt.position.y
     and (inputs[1].type ~= "splitter" or inputs[1].position.y == belt.position.y - 1) then
       input_direction = defines.direction.south
-      start_pos = {x = belt.position.x, y = belt.position.y - 0.5}
 
-    elseif (belt.direction == defines.direction.east or belt.direction == defines.direction.west)
+    elseif DY[belt.direction] == 0
     and inputs[1].position.y > belt.position.y
     and (inputs[1].type ~= "splitter" or inputs[1].position.y == belt.position.y + 1) then
       input_direction = defines.direction.north
-      start_pos = {x = belt.position.x, y = belt.position.y + 0.5}
     end
   end
+
+  start_pos.x = belt.position.x - 0.5 * DX[input_direction]
+  start_pos.y = belt.position.y - 0.5 * DY[input_direction]
+  end_pos.x = belt.position.x + 0.5 * DX[belt.direction]
+  end_pos.y = belt.position.y + 0.5 * DY[belt.direction]
 
   return {
     input_direction = input_direction,
@@ -733,67 +742,72 @@ end
 
 function get_line_info(line)
   local owner = line.owner
+  local owner_info = get_belt_info(owner)
   local start_pos = owner.position
   local end_pos = owner.position
   local length = 1
+  local line_index = get_line_index(line)
 
-  if owner.type == "transport-belt" or owner.type == "underground-belt" then
-    local owner_info = get_belt_info(owner)
-    local line_index = 0
-    for i = 1, owner.get_max_transport_line_index() do
-      if line.line_equals(owner.get_transport_line(i)) then
-        line_index = i
-        break
-      end
+  if owner.type == "transport-belt" then
+    start_pos = adjusted_line_pos(owner.position, owner_info.start_pos, owner_info.input_direction, line_index)
+    end_pos = adjusted_line_pos(owner.position, owner_info.end_pos, owner.direction, line_index)
+    -- Adjust length of curved belts
+    -- https://forums.factorio.com/viewtopic.php?p=554468#p554468
+    local distance = math.abs(start_pos.x - end_pos.x) + math.abs(start_pos.y - end_pos.y)
+    if distance < 1 then
+      length = 106 / 256
+    elseif distance > 1 then
+      length = 295 / 256
     end
 
-    if owner.type == "transport-belt" then
-      start_pos = adjusted_line_pos(owner.position, owner_info.start_pos, owner_info.input_direction, line_index)
-      end_pos = adjusted_line_pos(owner.position, owner_info.end_pos, owner.direction, line_index)
-      -- Adjust length of curved belts
-      -- https://forums.factorio.com/viewtopic.php?p=554468#p554468
-      local distance = math.abs(start_pos.x - end_pos.x) + math.abs(start_pos.y - end_pos.y)
-      if distance < 1 then
-        length = 106 / 256
-      elseif distance > 1 then
-        length = 295 / 256
-      end
+  elseif owner.type == "underground-belt" and owner.belt_to_ground_type == "input"
+  and line_index <= 2 then
+    length = 0.5
+    start_pos = adjusted_line_pos(owner.position, owner_info.start_pos, owner.direction, line_index)
+    end_pos = adjusted_line_pos(owner_info.end_pos, owner.position, owner.direction, line_index)
 
-    elseif owner.type == "underground-belt" and owner.belt_to_ground_type == "input" then
-      length = 0.5
-      start_pos = adjusted_line_pos(owner.position, owner_info.start_pos, owner.direction, line_index)
-      end_pos = adjusted_line_pos(owner_info.end_pos, owner.position, owner.direction, line_index)
-      if owner.neighbours then
-        -- Extend length to reach the exit
-        local distance = util.distance(owner.position, owner.neighbours.position)
-        local dx = 0
-        local dy = 0
-        if owner.direction == defines.direction.north then
-          dy = -1
-        elseif owner.direction == defines.direction.south then
-          dy = 1
-        elseif owner.direction == defines.direction.east then
-          dx = 1
-        elseif owner.direction == defines.direction.west then
-          dx = -1
-        end
-        end_pos = {x = end_pos.x + dx * distance, y = end_pos.y + dy * distance}
-        length = length + distance
-      end
-
-    elseif owner.type == "underground-belt" and owner.belt_to_ground_type == "output" then
-      length = 0.5
-      start_pos = adjusted_line_pos(owner_info.start_pos, owner.position, owner.direction, line_index)
+  elseif owner.type == "underground-belt" and owner.belt_to_ground_type == "input"
+  and line_index > 2 then
+    length = 0.5
+    start_pos = adjusted_line_pos(owner_info.start_pos, owner.position, owner.direction, line_index)
+    if owner.neighbours then
+      -- Extend length to meet the paired underground belt
+      length = util.distance(owner.position, owner.neighbours.position)
+      end_pos.x = start_pos.x + DX[owner.direction] * length
+      end_pos.y = start_pos.y + DY[owner.direction] * length
+    else
       end_pos = adjusted_line_pos(owner.position, owner_info.end_pos, owner.direction, line_index)
     end
 
+  elseif owner.type == "underground-belt" and owner.belt_to_ground_type == "output"
+  and line_index <= 2 then
+    length = 0.5
+    start_pos = adjusted_line_pos(owner_info.start_pos, owner.position, owner.direction, line_index)
+    end_pos = adjusted_line_pos(owner.position, owner_info.end_pos, owner.direction, line_index)
+
+  elseif owner.type == "underground-belt" and owner.belt_to_ground_type == "output"
+  and line_index > 2 then
+    length = 0.5
+    start_pos = adjusted_line_pos(owner.position, owner_info.start_pos, owner.direction, line_index)
+    end_pos = adjusted_line_pos(owner_info.end_pos, owner.position, owner.direction, line_index)
   end
 
   return {
     start_pos = start_pos,
     end_pos = end_pos,
     length = length,
+    index = line_index,
   }
+end
+
+function get_line_index(line)
+  local owner = line.owner
+  for i = 1, owner.get_max_transport_line_index() do
+    if line == owner.get_transport_line(i) then
+      return i
+    end
+  end
+  return 0
 end
 
 function adjusted_line_pos(belt_pos, pos, direction, line_index)
@@ -806,34 +820,34 @@ function adjusted_line_pos(belt_pos, pos, direction, line_index)
 
   -- North
   if pos.x == belt_pos.x and pos.y < belt_pos.y then
-    if line_index == 1 then
-      result.x = result.x + sign * 0.25
-    elseif line_index == 2 then
-      result.x = result.x - sign * 0.25
+    if line_index == 1 or line_index == 3 then
+      result.x = result.x + sign * 0.234375
+    elseif line_index == 2 or line_index == 4 then
+      result.x = result.x - sign * 0.234375
     end
 
   -- South
   elseif pos.x == belt_pos.x and pos.y > belt_pos.y then
-    if line_index == 1 then
-      result.x = result.x + sign * 0.25
-    elseif line_index == 2 then
-      result.x = result.x - sign * 0.25
+    if line_index == 1 or line_index == 3 then
+      result.x = result.x + sign * 0.234375
+    elseif line_index == 2 or line_index == 4 then
+      result.x = result.x - sign * 0.234375
     end
 
   -- East
   elseif pos.y == belt_pos.y and pos.x > belt_pos.x then
-    if line_index == 1 then
-      result.y = result.y + sign * 0.25
-    elseif line_index == 2 then
-      result.y = result.y - sign * 0.25
+    if line_index == 1 or line_index == 3 then
+      result.y = result.y + sign * 0.234375
+    elseif line_index == 2 or line_index == 4 then
+      result.y = result.y - sign * 0.234375
     end
 
   -- West
   elseif pos.y == belt_pos.y and pos.x < belt_pos.x then
-    if line_index == 1 then
-      result.y = result.y + sign * 0.25
-    elseif line_index == 2 then
-      result.y = result.y - sign * 0.25
+    if line_index == 1 or line_index == 3 then
+      result.y = result.y + sign * 0.234375
+    elseif line_index == 2 or line_index == 4 then
+      result.y = result.y - sign * 0.234375
     end
   end
 
