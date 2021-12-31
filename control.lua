@@ -8,7 +8,7 @@
 
 require "util"
 
-local DEBUG = true
+local DEBUG = false
 local INSERTER_SEARCH_DISTANCE = 5
 local ROBOT_SEARCH_DISTANCE = 5
 local HAS_TRANSPORT_LINE = {
@@ -175,8 +175,17 @@ function on_tick_player(player, controller)
       -- Find new belt
       if controller.belt_progress >= info.length
       or controller.line.get_item_count(controller.item) == 0 then
-        local output_line = get_output_line(controller.line, target)
-        if output_line and output_line.get_item_count(controller.item) > 0 then
+        local output_lines = get_output_lines(controller.line, target)
+        local output_line = nil
+        -- Pick a random belt
+        shuffle(output_lines)
+        for i = 1, #output_lines do
+          if output_lines[i].get_item_count(controller.item) > 0 then
+            output_line = output_lines[i]
+            break
+          end
+        end
+        if output_line then
           -- Reset progress
           controller.belt_progress = controller.belt_progress - info.length
           if controller.belt_progress > target.prototype.belt_speed
@@ -278,6 +287,26 @@ function on_tick_player(player, controller)
       x = end_pos.x + progress * (start_pos.x - end_pos.x),
       y = end_pos.y + progress * (start_pos.y - end_pos.y),
     }
+
+    if DEBUG then
+      rendering.draw_circle{
+        surface = target.surface,
+        target = start_pos,
+        color = {r=1, g=0, b=0, a=1},
+        radius = 0.2,
+        width = 2,
+        time_to_live = 2,
+      }
+      rendering.draw_circle{
+        surface = target.surface,
+        target = end_pos,
+        color = {r=1, g=1, b=0, a=1},
+        radius = 0.2,
+        width = 2,
+        time_to_live = 2,
+      }
+    end
+
 
   elseif HAS_TRANSPORT_LINE[target.type] then
     if not info then
@@ -439,18 +468,23 @@ function find_transport_line(entity, item, controller)
   end
 end
 
-function get_output_line(line, belt)
+function get_output_lines(line, belt)
   local index = get_line_index(line, belt)
+
   -- 1. Search inside the belt entity
   if belt.type == "underground-belt"
   and belt.belt_to_ground_type == "input"
   and index <= 2 then
     for i = 3, 4 do
       local output_line = belt.get_transport_line(i)
-      if line ~= output_line and line.line_equals(output_line) then
-        return output_line
+      if line.line_equals(output_line) then
+        return {output_line}
       end
     end
+  end
+  if belt.type == "splitter" and index <= 4 then
+    -- Splitter always breaks transport line, so this is easy
+    return line.output_lines
   end
 
   -- 2. Search the underground exit
@@ -461,7 +495,7 @@ function get_output_line(line, belt)
     for i = 1, 2 do
       local output_line = belt.neighbours.get_transport_line(i)
       if line.line_equals(output_line) then
-        return output_line
+        return {output_line}
       end
     end
   end
@@ -471,14 +505,14 @@ function get_output_line(line, belt)
     for i = 1, belt.get_max_transport_line_index() do
       local output_line = belt.get_transport_line(i)
       if line.line_equals(output_line) then
-        return output_line
+        return {output_line}
       end
     end
   end
 
   -- 4. If the line does not match because the internal transport line changed,
   -- use LuaTransportBelt.output_lines to find the new line
-  return line.output_lines[1]
+  return line.output_lines
 end
 
 -- Return normalized distance from drop_position
@@ -528,6 +562,9 @@ end
 function start_item_zoom(player, item, entity)
   player.set_shortcut_toggled("item-zoom", true)
   player.clear_cursor()
+  if player.character then
+    player.character.walking_state = {walking = false}
+  end
 
   -- Save current controller
   local controller = {
@@ -673,12 +710,13 @@ function recipe_contains_item(recipe, item)
 end
 
 function entity_item_count(entity, item)
-  if HAS_TRANSPORT_LINE[entity] then return 0 end
-  local count = entity.get_item_count(item)
-  if entity.type == "inserter" and entity.held_stack.valid_for_read then
-    count = entity.held_stack.count
+  if HAS_TRANSPORT_LINE[entity] then
+    return 0
   end
-  return count
+  if entity.type == "inserter" and entity.held_stack.valid_for_read then
+    return entity.held_stack.count
+  end
+  return entity.get_item_count(item)
 end
 
 function shuffle(t)
@@ -739,8 +777,8 @@ function get_line_info(line, belt)
   local line_index = get_line_index(line, belt)
 
   if belt.type == "transport-belt" then
-    start_pos = adjusted_line_pos(belt.position, belt_info.start_pos, belt_info.input_direction, line_index)
-    end_pos = adjusted_line_pos(belt.position, belt_info.end_pos, belt.direction, line_index)
+    start_pos = line_position(belt_info.start_pos, belt_info.input_direction, line_index)
+    end_pos = line_position(belt_info.end_pos, belt.direction, line_index)
     -- Adjust length of curved belts
     -- https://forums.factorio.com/viewtopic.php?p=554468#p554468
     local distance = math.abs(start_pos.x - end_pos.x) + math.abs(start_pos.y - end_pos.y)
@@ -753,27 +791,27 @@ function get_line_info(line, belt)
   elseif belt.type == "underground-belt" and belt.belt_to_ground_type == "input"
   and line_index <= 2 then
     length = 0.5
-    start_pos = adjusted_line_pos(belt.position, belt_info.start_pos, belt.direction, line_index)
-    end_pos = adjusted_line_pos(belt_info.end_pos, belt.position, belt.direction, line_index)
+    start_pos = line_position(belt_info.start_pos, belt.direction, line_index)
+    end_pos.x = start_pos.x + DX[belt.direction] * length
+    end_pos.y = start_pos.y + DY[belt.direction] * length
 
   elseif belt.type == "underground-belt" and belt.belt_to_ground_type == "input"
   and line_index > 2 then
     length = 0.5
-    start_pos = adjusted_line_pos(belt_info.start_pos, belt.position, belt.direction, line_index)
+    start_pos = line_position(belt.position, belt.direction, line_index)
     if belt.neighbours then
       -- Extend length to meet the paired underground belt
       length = util.distance(belt.position, belt.neighbours.position)
-      end_pos.x = start_pos.x + DX[belt.direction] * length
-      end_pos.y = start_pos.y + DY[belt.direction] * length
-    else
-      end_pos = adjusted_line_pos(belt.position, belt_info.end_pos, belt.direction, line_index)
     end
+    end_pos.x = start_pos.x + DX[belt.direction] * length
+    end_pos.y = start_pos.y + DY[belt.direction] * length
 
   elseif belt.type == "underground-belt" and belt.belt_to_ground_type == "output"
   and line_index <= 2 then
     length = 0.5
-    start_pos = adjusted_line_pos(belt_info.start_pos, belt.position, belt.direction, line_index)
-    end_pos = adjusted_line_pos(belt.position, belt_info.end_pos, belt.direction, line_index)
+    start_pos = line_position(belt.position, belt.direction, line_index)
+    end_pos.x = start_pos.x + DX[belt.direction] * length
+    end_pos.y = start_pos.y + DY[belt.direction] * length
 
   elseif belt.type == "underground-belt" and belt.belt_to_ground_type == "output"
   and line_index > 2 then
@@ -781,8 +819,37 @@ function get_line_info(line, belt)
       game.print("Item Zoom: I don't think this belt line is used.")
     end
     length = 0.5
-    start_pos = adjusted_line_pos(belt.position, belt_info.start_pos, belt.direction, line_index)
-    end_pos = adjusted_line_pos(belt_info.end_pos, belt.position, belt.direction, line_index)
+    start_pos = line_position(belt_info.start_pos, belt.direction, line_index)
+    end_pos.x = start_pos.x + DX[belt.direction] * length
+    end_pos.y = start_pos.y + DY[belt.direction] * length
+
+  elseif belt.type == "splitter" and line_index <= 4 then
+    -- Adjust length of input buffer
+    -- https://forums.factorio.com/viewtopic.php?p=554468#p554468
+    length = 179 / 256
+    local position = belt_info.start_pos
+    local sign = 1
+    if line_index <= 2 then
+      sign = -1
+    end
+    position.x = position.x - DY[belt.direction] * sign * 0.5
+    position.y = position.y + DX[belt.direction] * sign * 0.5
+    start_pos = line_position(position, belt.direction, line_index)
+    end_pos.x = start_pos.x + DX[belt.direction] * 0.7
+    end_pos.y = start_pos.y + DY[belt.direction] * 0.7
+
+  elseif belt.type == "splitter" and line_index > 4 then
+    length = 77 / 256
+    local position = belt_info.end_pos
+    local sign = 1
+    if line_index <= 6 then
+      sign = -1
+    end
+    position.x = position.x - DY[belt.direction] * sign * 0.5
+    position.y = position.y + DX[belt.direction] * sign * 0.5
+    end_pos = line_position(position, belt.direction, line_index)
+    start_pos.x = end_pos.x - DX[belt.direction] * 0.3
+    start_pos.y = end_pos.y - DY[belt.direction] * 0.3
   end
 
   return {
@@ -802,46 +869,19 @@ function get_line_index(line, belt)
   return 0
 end
 
-function adjusted_line_pos(belt_pos, pos, direction, line_index)
-  local result = util.table.deepcopy(pos)
+function line_position(pos, direction, line_index)
   local sign = 1
-  if direction == defines.direction.north
-  or direction == defines.direction.east then
-    sign = -1
+  if line_index % 2 == 0 then
+    sign = sign * -1
+  end
+  if DY[direction] == 0 then
+    sign = sign * -1
   end
 
-  -- North
-  if pos.x == belt_pos.x and pos.y < belt_pos.y then
-    if line_index == 1 or line_index == 3 then
-      result.x = result.x + sign * 0.234375
-    elseif line_index == 2 or line_index == 4 then
-      result.x = result.x - sign * 0.234375
-    end
-
-  -- South
-  elseif pos.x == belt_pos.x and pos.y > belt_pos.y then
-    if line_index == 1 or line_index == 3 then
-      result.x = result.x + sign * 0.234375
-    elseif line_index == 2 or line_index == 4 then
-      result.x = result.x - sign * 0.234375
-    end
-
-  -- East
-  elseif pos.y == belt_pos.y and pos.x > belt_pos.x then
-    if line_index == 1 or line_index == 3 then
-      result.y = result.y + sign * 0.234375
-    elseif line_index == 2 or line_index == 4 then
-      result.y = result.y - sign * 0.234375
-    end
-
-  -- West
-  elseif pos.y == belt_pos.y and pos.x < belt_pos.x then
-    if line_index == 1 or line_index == 3 then
-      result.y = result.y + sign * 0.234375
-    elseif line_index == 2 or line_index == 4 then
-      result.y = result.y - sign * 0.234375
-    end
-  end
+  -- Offset from center of belt by 7.5 / 32 tiles
+  local result = util.table.deepcopy(pos)
+  result.x = result.x + DY[direction] * sign * 0.234375
+  result.y = result.y + DX[direction] * sign * 0.234375
 
   return result
 end
