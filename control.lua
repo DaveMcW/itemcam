@@ -117,6 +117,8 @@ function on_tick_player(player, controller)
     return
   end
 
+  local info = nil
+
   -- Did something grab the item from our target?
   if target.get_output_inventory() then
     for _, grabber in pairs(controller.grabbers) do
@@ -165,7 +167,7 @@ function on_tick_player(player, controller)
 
     -- Did the item move to a different belt?
     if HAS_TRANSPORT_LINE[target.type] then
-      local info = get_line_info(controller.line)
+      info = get_line_info(controller.line)
       -- Stop at the end of the belt
       if controller.belt_progress < info.length then
         controller.belt_progress = controller.belt_progress + target.prototype.belt_speed
@@ -184,6 +186,7 @@ function on_tick_player(player, controller)
           -- Move to new belt
           controller.line = output_line
           target = output_line.owner
+          info = nil
         end
       end
     end
@@ -277,8 +280,10 @@ function on_tick_player(player, controller)
     }
 
   elseif HAS_TRANSPORT_LINE[target.type] then
+    if not info then
+      info = get_line_info(controller.line)
+    end
     -- Calculate a point on the transport line
-    local info = get_line_info(controller.line)
     local progress = controller.belt_progress / info.length
     position = {
       x = info.start_pos.x + progress * (info.end_pos.x - info.start_pos.x),
@@ -788,7 +793,7 @@ function get_line_info(line)
   elseif owner.type == "underground-belt" and owner.belt_to_ground_type == "output"
   and line_index > 2 then
     if DEBUG then
-      game.print("Item Zoom: I don't think these belt lines are used.")
+      game.print("Item Zoom: I don't think this belt line is used.")
     end
     length = 0.5
     start_pos = adjusted_line_pos(owner.position, owner_info.start_pos, owner.direction, line_index)
