@@ -78,11 +78,11 @@ function on_player_selected_area(event)
   local player = game.get_player(event.player_index)
 
   -- Sort entities by distance from selection center
+  local entities = event.entities
   local center = {
     x = (event.area.left_top.x + event.area.right_bottom.x) / 2,
     y = (event.area.left_top.y + event.area.right_bottom.y) / 2,
   }
-  local entities = event.entities
   table.sort(entities, function (a, b) return cmp_dist(a.position, center) < cmp_dist(b.position, center) end)
 
   for _, entity in pairs(entities) do
@@ -219,12 +219,8 @@ function on_tick_player(player, controller)
         if entity_contains_item(found, controller.item) then
           target = found
         else
-          if entity_contains_item(found, controller.item) then
-            target = found
-          else
-            -- Did an inserter grab the item in the same tick?
-            target = find_picking_inserter(found, controller.item) or target
-          end
+          -- Did an inserter grab the item in the same tick?
+          target = find_picking_inserter(found, controller.item) or target
         end
       end
 
@@ -342,7 +338,7 @@ end
 function find_picking_inserter(entity, item)
   local inserters = entity.surface.find_entities_filtered{
     area = expand_box(entity.bounding_box, INSERTER_SEARCH_DISTANCE),
-    type = {"inserter"},
+    type = "inserter",
   }
   for _, inserter in pairs(inserters) do
     if inserter.pickup_target == entity
@@ -375,7 +371,7 @@ function find_grabbers(entity)
 
     local inserters = entity.surface.find_entities_filtered{
       area = expand_box(box, INSERTER_SEARCH_DISTANCE),
-      type = {"inserter"},
+      type = "inserter",
     }
     for _, inserter in pairs(inserters) do
       local count = 0
@@ -591,13 +587,14 @@ function exit_item_zoom(player)
   }
 end
 
--- Calculate a distance value using Pythagorean theorem
+-- Calculate a distance value using Pythagorean theorem.
+-- We can skip the square root, since it is only used to compare two points.
 function cmp_dist(a, b)
-  local dx = a.x - b.x
-  local dy = a.y - b.y
-  return dx*dx + dy*dy
+  return (a.x-b.x)*(a.x-b.x) + (a.y-b.y)*(a.y-b.y)
 end
 
+-- Return item paramenter if it exists in the entity.
+-- Return random item if item parameter is nil.
 function entity_contains_item(entity, item)
 
   -- Check output inventory
@@ -661,6 +658,8 @@ function entity_contains_item(entity, item)
   end
 end
 
+-- Return item paramenter if it exists in the inventory.
+-- Return random item if item parameter is nil.
 function inventory_contains_item(inventory, item)
   if not inventory then return end
   if inventory.get_item_count() == 0 then return end
@@ -670,6 +669,8 @@ function inventory_contains_item(inventory, item)
   return found
 end
 
+-- Return item paramenter if it exists in the recipe products.
+-- Return random product if item parameter is nil.
 function recipe_contains_item(recipe, item)
   if not recipe.products then return end
   for _, product in pairs(recipe.products) do
@@ -678,7 +679,6 @@ function recipe_contains_item(recipe, item)
       return product.name
     end
   end
-  return false
 end
 
 function entity_item_count(entity, item)
@@ -787,6 +787,9 @@ function get_line_info(line)
 
   elseif owner.type == "underground-belt" and owner.belt_to_ground_type == "output"
   and line_index > 2 then
+    if DEBUG then
+      game.print("Item Zoom: I don't think these belt lines are used.")
+    end
     length = 0.5
     start_pos = adjusted_line_pos(owner.position, owner_info.start_pos, owner.direction, line_index)
     end_pos = adjusted_line_pos(owner_info.end_pos, owner.position, owner.direction, line_index)
