@@ -9,16 +9,23 @@
 require "util"
 
 local HAS_TRANSPORT_LINE = {
-  ["transport-belt"] = 1,
-  ["underground-belt"] = 1,
-  ["splitter"] = 1,
-  ["linked-belt"] = 1,
-  ["loader-1x1"] = 1,
-  ["loader-1x2"] = 1,
+  ["transport-belt"] = true,
+  ["underground-belt"] = true,
+  ["splitter"] = true,
+  ["linked-belt"] = true,
+  ["loader-1x1"] = true,
+  ["loader-1x2"] = true,
+}
+local IS_CRAFTING_MACHINE = {
+  ["assembling-machine"] = true,
+  ["furnace"] = true,
+  ["rocket-silo"] = true,
+  ["reactor"] = true,
+  ["burner-generator"] = true,
 }
 local IS_ROBOT = {
-  ["construction-robot"] = 1,
-  ["logistic-robot"] = 1,
+  ["construction-robot"] = true,
+  ["logistic-robot"] = true,
 }
 local DX = {
   [defines.direction.north] = 0,
@@ -129,14 +136,29 @@ function on_tick_player(player, controller)
 
   local info = nil
 
+  -- Did we create a new item?
+  if IS_CRAFTING_MACHINE[target.type] and not controller.item then
+    local items = {}
+    for item in pairs(target.get_output_inventory().get_contents()) do
+      table.insert(items, item)
+    end
+    if #items > 0 then
+      controller.item = items[math.random(#items)]
+    end
+  end
+
+  if not controller.item then
+    -- Wait for a new item to be crafted
+
   -- Did something grab the item from our target?
-  if target.get_output_inventory() and controller.grabbers then
+  elseif target.get_output_inventory() and controller.grabbers then
     for _, grabber in pairs(controller.grabbers) do
       if grabber.entity.valid
       and entity_contains_item(grabber.entity, controller.item) then
         if grabber.entity.type == "inserter"
         and grabber.entity.held_stack_position.x == grabber.entity.pickup_position.x
-        and grabber.entity.held_stack_position.y == grabber.entity.pickup_position.y then
+        and grabber.entity.held_stack_position.y == grabber.entity.pickup_position.y
+        and grabber.entity.held_stack.count > grabber.count then
           target = grabber.entity
           controller.grabbers = nil
           break
@@ -227,15 +249,22 @@ function on_tick_player(player, controller)
       end
     end
 
-  -- Did the target drop the item somwhere?
+  -- Did the target drop the item somewhere?
   elseif entity_item_count(target, controller.item) < controller.count
   or target.type == "mining-drill" then
     if target.type == "inserter" or target.type == "mining-drill" then
-      if target.drop_target
-      and (target.type ~= "mining-drill" or entity_contains_item(target.drop_target, controller.item)) then
-        target = target.drop_target
-        controller.grabbers = nil
-        find_transport_line(target, controller)
+      if target.drop_target then
+        -- Inserter definitely dropped an item, move to target without counting.
+        -- Mining drill might not have dropped an item, so count first.
+        if (target.type == "inserter"
+        or entity_contains_item(target.drop_target, controller.item)) then
+          target = target.drop_target
+          controller.grabbers = nil
+          find_transport_line(target, controller)
+          if IS_CRAFTING_MACHINE[target.type] then
+            controller.item = nil
+          end
+        end
       else
         -- Search for item on ground
         local items = target.surface.find_entities_filtered{
@@ -261,11 +290,13 @@ function on_tick_player(player, controller)
       if found then
         if entity_contains_item(found, controller.item) then
           target = found
+          controller.grabbers = nil
         else
           -- Did an inserter grab the item in the same tick?
           found = find_picking_inserter(found, controller.item)
           if found then
             target = found
+            controller.grabbers = nil
           end
         end
       end
@@ -280,11 +311,13 @@ function on_tick_player(player, controller)
       if found then
         if entity_contains_item(found, controller.item) then
           target = found
+          controller.grabbers = nil
         else
           -- Did an inserter grab the item in the same tick?
           found = find_picking_inserter(found, controller.item)
           if found then
             target = found
+            controller.grabbers = nil
           end
         end
       end
@@ -402,10 +435,15 @@ function on_tick_player(player, controller)
   if not controller.grabbers then
     controller.grabbers = find_grabbers(target)
   end
+
   -- Update item count
   for _, grabber in pairs(controller.grabbers) do
     if grabber.entity.valid then
-      grabber.count = grabber.entity.get_item_count(controller.item)
+      if controller.item then
+        grabber.count = grabber.entity.get_item_count(controller.item)
+      else
+        grabber.count = grabber.entity.get_item_count()
+      end
       if grabber.entity.type == "inserter"
       and grabber.entity.held_stack.valid_for_read
       and grabber.entity.held_stack.name == controller.item then
@@ -799,6 +837,9 @@ function recipe_contains_item(recipe, item)
 end
 
 function entity_item_count(entity, item)
+  if not item then
+    return 0
+  end
   if HAS_TRANSPORT_LINE[entity] then
     return 0
   end
