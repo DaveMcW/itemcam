@@ -38,6 +38,12 @@ function on_init()
   global.zoom_controllers = {}
 end
 
+function on_configuration_changed()
+  for _, player in pairs(game.players) do
+    exit_item_zoom(player)
+  end
+end
+
 function on_tick()
   local my_settings = settings.global
   global.INSERTER_SEARCH_DISTANCE = my_settings["item-zoom-inserter-search-distance"].value
@@ -669,16 +675,19 @@ end
 function exit_item_zoom(player)
   player.set_shortcut_toggled("item-zoom", false)
 
-  local old_controller = global.zoom_controllers[player.index]
-  if not old_controller then return end
+  local controller = global.zoom_controllers[player.index]
+  if not controller then return end
+
+  -- Delete controller
+  global.zoom_controllers[player.index] = nil
 
   -- Search for a valid character
   local character = nil
-  if old_controller.controller_type == defines.controllers.character then
-    character = old_controller.character
+  if controller.controller_type == defines.controllers.character then
+    character = controller.character
     if not character or not character.valid then
-      if old_controller.character_name then
-        character = player.create_character(old_controller.character_name)
+      if controller.character_name and game.entity_prototypes[controller.character_name].type == "character" then
+        character = player.create_character(controller.character_name)
       else
         character = player.create_character()
       end
@@ -687,12 +696,9 @@ function exit_item_zoom(player)
 
   -- Swap back to old controller
   player.set_controller{
-    type = old_controller.controller_type,
+    type = controller.controller_type,
     character = character,
   }
-
-  -- Delete controller
-  global.zoom_controllers[player.index] = nil
 end
 
 -- Calculate a distance value using Pythagorean theorem.
@@ -964,6 +970,7 @@ end
 
 
 script.on_init(on_init)
+script.on_configuration_changed(on_configuration_changed)
 script.on_event(defines.events.on_tick, on_tick)
 script.on_event(defines.events.on_player_selected_area, on_player_selected_area)
 script.on_event(defines.events.on_player_alt_selected_area, on_player_selected_area)
