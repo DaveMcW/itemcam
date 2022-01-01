@@ -386,6 +386,11 @@ function on_tick_player(player, controller)
     }
   end
 
+  -- Don't trust inserters pointing at a train
+  if target.type == "cargo-wagon" or target.type == "artillery-wagon" then
+    controller.grabbers = nil
+  end
+
   -- Find entities that could grab the item next tick
   if not controller.grabbers then
     controller.grabbers = find_grabbers(target)
@@ -469,7 +474,9 @@ function find_grabbers(entity)
   if entity.get_output_inventory()
   or HAS_TRANSPORT_LINE[entity.type]
   or (entity.type == "inserter" and not entity.drop_target)
-  or entity.type == "item-entity" then
+  or entity.type == "item-entity"
+  or entity.type == "cargo-wagon"
+  or entity.type == "artillery-wagon" then
 
     local box = entity.bounding_box
 
@@ -727,6 +734,14 @@ function entity_contains_item(entity, item)
 
   elseif entity.type == "roboport" then
     inventory = entity.get_inventory(defines.inventory.roboport_material)
+    return inventory_contains_item(inventory, item)
+
+  elseif entity.type == "cargo-wagon" then
+    inventory = entity.get_inventory(defines.inventory.cargo_wagon)
+    return inventory_contains_item(inventory, item)
+
+  elseif entity.type == "artillery-wagon" then
+    inventory = entity.get_inventory(defines.inventory.artillery_wagon_ammo)
     return inventory_contains_item(inventory, item)
 
   -- Check current recipe
