@@ -474,9 +474,7 @@ function find_grabbers(entity)
   if entity.get_output_inventory()
   or HAS_TRANSPORT_LINE[entity.type]
   or (entity.type == "inserter" and not entity.drop_target)
-  or entity.type == "item-entity"
-  or entity.type == "cargo-wagon"
-  or entity.type == "artillery-wagon" then
+  or entity.type == "item-entity" then
 
     local box = entity.bounding_box
 
