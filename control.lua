@@ -225,7 +225,8 @@ function on_tick_player(player, controller)
   elseif entity_item_count(target, controller.item) < controller.count
   or target.type == "mining-drill" then
     if target.type == "inserter" or target.type == "mining-drill" then
-      if target.drop_target then
+      if target.drop_target
+      and (target.type ~= "mining-drill" or entity_contains_item(target.drop_target, controller.item)) then
         target = target.drop_target
         controller.grabbers = nil
         find_transport_line(target, controller)
@@ -344,7 +345,7 @@ function on_tick_player(player, controller)
     end
     local progress = belt_progress
     if target.type ~= "splitter" then
-      progress = controller.belt_progress / info.length
+      progress = belt_progress / info.length
     end
     -- Calculate a point on the transport line
     position = {
@@ -520,13 +521,15 @@ function find_grabbers(entity)
 end
 
 function find_transport_line(entity, controller)
+  -- TODO: Use inserter drop position to eliminate some lines
+
   if not HAS_TRANSPORT_LINE[entity.type] then return end
   for i = 1, entity.get_max_transport_line_index() do
     local line = entity.get_transport_line(i)
     if line.get_item_count(controller.item) > 0 then
-      local info = get_line_info(line, entity)
       controller.line = line
 
+      local info = get_line_info(line, entity)
       if entity.type == "transport-belt" then
         controller.belt_progress = info.length / 2
       elseif entity.type == "splitter" and info.index <= 4 then
@@ -535,6 +538,8 @@ function find_transport_line(entity, controller)
         controller.belt_progress = 0.5
       elseif entity.type == "loader-1x2" then
         controller.belt_progress = 1
+      else
+        controller.belt_progress = 0
       end
 
       break
@@ -682,9 +687,12 @@ function exit_item_zoom(player)
 
   -- Swap back to old controller
   player.set_controller{
-    type = defines.controllers.character,
+    type = old_controller.controller_type,
     character = character,
   }
+
+  -- Delete controller
+  global.zoom_controllers[player.index] = nil
 end
 
 -- Calculate a distance value using Pythagorean theorem.
