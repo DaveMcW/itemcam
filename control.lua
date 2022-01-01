@@ -8,9 +8,6 @@
 
 require "util"
 
-local DEBUG = true
-local INSERTER_SEARCH_DISTANCE = 5
-local ROBOT_SEARCH_DISTANCE = 5
 local HAS_TRANSPORT_LINE = {
   ["transport-belt"] = 1,
   ["underground-belt"] = 1,
@@ -42,6 +39,10 @@ function on_init()
 end
 
 function on_tick()
+  local my_settings = settings.global
+  global.INSERTER_SEARCH_DISTANCE = my_settings["item-zoom-inserter-search-distance"].value
+  global.ROBOT_SEARCH_DISTANCE = my_settings["item-zoom-robot-search-distance"].value
+
   for player_index, controller in pairs(global.zoom_controllers) do
     local player = game.get_player(player_index)
     if player.controller_type ~= defines.controllers.god then
@@ -97,6 +98,7 @@ function on_player_selected_area(event)
 end
 
 function on_tick_player(player, controller)
+  local DEBUG = settings.get_player_settings(player.index)["item-zoom-debug"].value
   local target = controller.entity
 
   -- Target was destroyed... but did something grab it?
@@ -220,12 +222,13 @@ function on_tick_player(player, controller)
     end
 
   -- Did the target drop the item somwhere?
-  elseif entity_item_count(target, controller.item) < controller.count then
-    if target.type == "inserter" then
+  elseif entity_item_count(target, controller.item) < controller.count
+  or target.type == "mining-drill" then
+    if target.type == "inserter" or target.type == "mining-drill" then
       if target.drop_target then
         target = target.drop_target
         controller.grabbers = nil
-        find_transport_line(target, item, controller)
+        find_transport_line(target, controller)
       else
         -- Search for item on ground
         local items = target.surface.find_entities_filtered{
@@ -389,23 +392,26 @@ function on_tick_player(player, controller)
   end
   -- Update item count
   for _, grabber in pairs(controller.grabbers) do
-    grabber.count = grabber.entity.get_item_count(controller.item)
-    if grabber.entity.type == "inserter"
-    and grabber.entity.held_stack.valid_for_read
-    and grabber.entity.held_stack.name == controller.item then
-      grabber.count = grabber.entity.held_stack.count
+    if grabber.entity.valid then
+      grabber.count = grabber.entity.get_item_count(controller.item)
+      if grabber.entity.type == "inserter"
+      and grabber.entity.held_stack.valid_for_read
+      and grabber.entity.held_stack.name == controller.item then
+        grabber.count = grabber.entity.held_stack.count
+      end
     end
   end
   if target.type == "logistic-container" or target.type == "roboport" then
     -- Delete old robots
     for i = #controller.grabbers, 1, -1 do
-      if IS_ROBOT[controller.grabbers[i]] then
+      if not controller.grabbers[i].entity.valid
+      or IS_ROBOT[controller.grabbers[i].entity.type] then
         table.remove(controller.grabbers, i)
       end
     end
     -- Find new robots
     local robots = target.surface.find_entities_filtered{
-      area = expand_box(target.bounding_box, ROBOT_SEARCH_DISTANCE),
+      area = expand_box(target.bounding_box, global.ROBOT_SEARCH_DISTANCE),
       type = {"construction-robot", "logistic-robot"},
       force = target.force,
     }
@@ -443,7 +449,7 @@ end
 -- Find an inserter on the first tick of its pickup animation
 function find_picking_inserter(entity, item)
   local inserters = entity.surface.find_entities_filtered{
-    area = expand_box(entity.bounding_box, INSERTER_SEARCH_DISTANCE),
+    area = expand_box(entity.bounding_box, global.INSERTER_SEARCH_DISTANCE),
     type = "inserter",
   }
   for _, inserter in pairs(inserters) do
@@ -476,7 +482,7 @@ function find_grabbers(entity)
     end
 
     local inserters = entity.surface.find_entities_filtered{
-      area = expand_box(box, INSERTER_SEARCH_DISTANCE),
+      area = expand_box(box, global.INSERTER_SEARCH_DISTANCE),
       type = "inserter",
     }
     for _, inserter in pairs(inserters) do
@@ -508,13 +514,24 @@ function find_grabbers(entity)
   return grabbers
 end
 
-function find_transport_line(entity, item, controller)
+function find_transport_line(entity, controller)
   if not HAS_TRANSPORT_LINE[entity.type] then return end
   for i = 1, entity.get_max_transport_line_index() do
     local line = entity.get_transport_line(i)
     if line.get_item_count(controller.item) > 0 then
+      local info = get_line_info(line, entity)
       controller.line = line
-      controller.belt_progress = 0.5
+
+      if entity.type == "transport-belt" then
+        controller.belt_progress = info.length / 2
+      elseif entity.type == "splitter" and info.index <= 4 then
+        controller.belt_progress = 0.5
+      elseif entity.type == "loader-1x1" then
+        controller.belt_progress = 0.5
+      elseif entity.type == "loader-1x2" then
+        controller.belt_progress = 1
+      end
+
       break
     end
   end
@@ -551,6 +568,16 @@ function get_output_lines(line, belt)
       end
     end
   end
+  if belt.type == "linked-belt"
+  and belt.linked_belt_type == "input"
+  and belt.linked_belt_neighbour then
+    for i = 1, 2 do
+      local output_line = belt.linked_belt_neighbour.get_transport_line(i)
+      if line.line_equals(output_line) then
+        return {output_line}
+      end
+    end
+  end
 
   -- 3. Search the belt entity outputs
   for _, output in pairs(belt.belt_neighbours.outputs) do
@@ -579,17 +606,6 @@ function inserter_progress(inserter)
   if angle > 1 then angle = angle - 2 end
   if angle < -1 then angle = angle + 2 end
   return math.abs(angle)
-end
-
-function draw_circle()
-  rendering.draw_circle{
-    surface = game.surfaces[1],
-    target = r,
-    color = {r=1, g=0, b=0, a=1},
-    radius = 0.2,
-    width = 3,
-    time_to_live = 2,
-  }
 end
 
 function expand_box(box, extra_tiles)
@@ -628,7 +644,7 @@ function start_item_zoom(player, item, entity)
     character_name = player.character and player.character.name,
     count = entity_item_count(entity, item),
   }
-  find_transport_line(entity, item, controller)
+  find_transport_line(entity, controller)
   global.zoom_controllers[player.index] = controller
 
   -- Swap to god controller
@@ -859,16 +875,6 @@ function get_line_info(line, belt)
     end_pos.x = start_pos.x + DX[belt.direction] * length
     end_pos.y = start_pos.y + DY[belt.direction] * length
 
-  elseif belt.type == "underground-belt" and belt.belt_to_ground_type == "output"
-  and line_index > 2 then
-    if DEBUG then
-      game.print("Item Zoom: I don't think this belt line is used. [gps="..belt.position.x..","..belt.position.y.."]")
-    end
-    length = 0.5
-    start_pos = line_position(belt_info.start_pos, belt.direction, line_index)
-    end_pos.x = start_pos.x + DX[belt.direction] * length
-    end_pos.y = start_pos.y + DY[belt.direction] * length
-
   elseif belt.type == "splitter" then
     if line_index <= 4 then
     -- Input buffer takes up most of the belt
@@ -887,6 +893,18 @@ function get_line_info(line, belt)
     -- so use one start_pos and end_pos for the entire splitter
     end_pos.x = start_pos.x + DX[belt.direction]
     end_pos.y = start_pos.y + DY[belt.direction]
+
+  elseif belt.type == "linked-belt" and belt.linked_belt_type == "input" then
+    length = 0.5
+    start_pos = line_position(belt_info.start_pos, belt.direction, line_index)
+    end_pos.x = start_pos.x + DX[belt.direction] * length
+    end_pos.y = start_pos.y + DY[belt.direction] * length
+
+  elseif belt.type == "linked-belt" and belt.linked_belt_type == "output" then
+    length = 0.5
+    end_pos = line_position(belt_info.end_pos, belt.direction, line_index)
+    start_pos.x = end_pos.x - DX[belt.direction] * length
+    start_pos.y = end_pos.y - DY[belt.direction] * length
   end
 
   return {
