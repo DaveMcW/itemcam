@@ -122,7 +122,7 @@ function on_tick_player(player, controller)
   local info = nil
 
   -- Did something grab the item from our target?
-  if target.get_output_inventory() then
+  if target.get_output_inventory() and controller.grabbers then
     for _, grabber in pairs(controller.grabbers) do
       if grabber.entity.valid
       and entity_contains_item(grabber.entity, controller.item) then
@@ -130,40 +130,46 @@ function on_tick_player(player, controller)
         and grabber.entity.held_stack_position.x == grabber.entity.pickup_position.x
         and grabber.entity.held_stack_position.y == grabber.entity.pickup_position.y then
           target = grabber.entity
+          controller.grabbers = nil
           break
         elseif IS_ROBOT[grabber.entity.type]
         and target.position.x == grabber.entity.position.x
         and target.position.y == grabber.entity.position.y then
           target = grabber.entity
+          controller.grabbers = nil
           break
         end
       end
     end
 
-  elseif (target.type == "inserter" and not target.drop_target) then
+  elseif (target.type == "inserter" and not target.drop_target) and controller.grabbers then
     for _, grabber in pairs(controller.grabbers) do
       if grabber.entity.valid
       and grabber.entity.type == "inserter"
       and entity_contains_item(grabber.entity, controller.item)
       and grabber.entity.held_stack.count > grabber.count then
         target = grabber.entity
+        controller.grabbers = nil
         controller.pickup_position = target.held_stack_position
         break
       end
     end
 
   elseif HAS_TRANSPORT_LINE[target.type] then
-    for _, grabber in pairs(controller.grabbers) do
-      if grabber.entity.valid
-      and grabber.entity.type == "inserter"
-      and entity_contains_item(grabber.entity, controller.item)
-      and grabber.entity.held_stack.count > grabber.count then
+    if controller.grabbers then
+      for _, grabber in pairs(controller.grabbers) do
+        if grabber.entity.valid
+        and grabber.entity.type == "inserter"
+        and entity_contains_item(grabber.entity, controller.item)
+        and grabber.entity.held_stack.count > grabber.count then
 
-        -- TODO: Compare held_stack_position to belt item position
+          -- TODO: Compare held_stack_position to belt item position
 
-        target = grabber.entity
-        controller.pickup_position = target.held_stack_position
-        break
+          target = grabber.entity
+          controller.grabbers = nil
+          controller.pickup_position = target.held_stack_position
+          break
+        end
       end
     end
 
@@ -204,6 +210,9 @@ function on_tick_player(player, controller)
           end
           -- Move to new belt
           controller.line = output_line
+          if target ~= output_line.owner then
+            controller.grabbers = nil
+          end
           target = output_line.owner
           info = nil
         end
@@ -215,6 +224,7 @@ function on_tick_player(player, controller)
     if target.type == "inserter" then
       if target.drop_target then
         target = target.drop_target
+        controller.grabbers = nil
         find_transport_line(target, item, controller)
       else
         -- Search for item on ground
@@ -225,6 +235,7 @@ function on_tick_player(player, controller)
         for _, item in pairs(items) do
           if item.stack.name == controller.item then
             target = item
+            controller.grabbers = nil
             break
           end
         end
@@ -242,7 +253,10 @@ function on_tick_player(player, controller)
           target = found
         else
           -- Did an inserter grab the item in the same tick?
-          target = find_picking_inserter(found, controller.item) or target
+          found = find_picking_inserter(found, controller.item)
+          if found then
+            target = found
+          end
         end
       end
 
@@ -258,7 +272,10 @@ function on_tick_player(player, controller)
           target = found
         else
           -- Did an inserter grab the item in the same tick?
-          target = find_picking_inserter(found, controller.item) or target
+          found = find_picking_inserter(found, controller.item)
+          if found then
+            target = found
+          end
         end
       end
 
@@ -322,10 +339,8 @@ function on_tick_player(player, controller)
     if not info then
       info = get_line_info(controller.line, target)
     end
-    local progress
-    if target.type == "splitter" then
-      progress = controller.belt_progress
-    else
+    local progress = belt_progress
+    if target.type ~= "splitter" then
       progress = controller.belt_progress / info.length
     end
     -- Calculate a point on the transport line
@@ -335,14 +350,6 @@ function on_tick_player(player, controller)
     }
 
     if DEBUG then
-      rendering.draw_circle{
-        surface = target.surface,
-        target = position,
-        color = {r=1, g=1, b=1, a=1},
-        radius = 0.0005,
-        width = 1,
-        time_to_live = 120,
-      }
       rendering.draw_circle{
         surface = target.surface,
         target = info.start_pos,
@@ -365,8 +372,50 @@ function on_tick_player(player, controller)
   -- Teleport to the item position
   player.teleport(position, target.surface)
 
-  -- Find potential entities that could grab the item next tick
-  controller.grabbers = find_grabbers(target)
+  if DEBUG then
+    rendering.draw_circle{
+      surface = target.surface,
+      target = position,
+      color = {r=1, g=1, b=1, a=1},
+      radius = 0.0005,
+      width = 1,
+      time_to_live = 120,
+    }
+  end
+
+  -- Find entities that could grab the item next tick
+  if not controller.grabbers then
+    controller.grabbers = find_grabbers(target)
+  end
+  -- Update item count
+  for _, grabber in pairs(controller.grabbers) do
+    grabber.count = grabber.entity.get_item_count(controller.item)
+    if grabber.entity.type == "inserter"
+    and grabber.entity.held_stack.valid_for_read
+    and grabber.entity.held_stack.name == controller.item then
+      grabber.count = grabber.entity.held_stack.count
+    end
+  end
+  if target.type == "logistic-container" or target.type == "roboport" then
+    -- Delete old robots
+    for i = #controller.grabbers, 1, -1 do
+      if IS_ROBOT[controller.grabbers[i]] then
+        table.remove(controller.grabbers, i)
+      end
+    end
+    -- Find new robots
+    local robots = target.surface.find_entities_filtered{
+      area = expand_box(target.bounding_box, ROBOT_SEARCH_DISTANCE),
+      type = {"construction-robot", "logistic-robot"},
+      force = target.force,
+    }
+    for _, robot in pairs(robots) do
+      if not entity_contains_item(robot) then
+        table.insert(controller.grabbers, {entity=robot, count=0})
+      end
+    end
+  end
+
 
   -- Save data for next tick
   controller.entity = target
@@ -431,16 +480,10 @@ function find_grabbers(entity)
       type = "inserter",
     }
     for _, inserter in pairs(inserters) do
-      local count = 0
-      if inserter.held_stack.valid_for_read then
-        count = inserter.held_stack.count
-      end
 
       if inserter.pickup_target == entity then
         -- Found inserter target
-        if count == 0 or HAS_TRANSPORT_LINE[entity.type] then
-          table.insert(grabbers, {entity=inserter, count=count})
-        end
+        table.insert(grabbers, {entity=inserter})
 
       elseif (entity.type == "inserter" and not entity.drop_target)
       or entity.type == "item-entity" then
@@ -450,22 +493,8 @@ function find_grabbers(entity)
         and p.y >= box.left_top.y
         and p.x <= box.right_bottom.x
         and p.y <= box.right_bottom.y then
-          table.insert(grabbers, {entity=inserter, count=count})
+          table.insert(grabbers, {entity=inserter})
         end
-      end
-    end
-  end
-
-  -- Robots pulling from specific entities
-  if entity.type == "logistic-container" or entity.type == "roboport" then
-    local robots = entity.surface.find_entities_filtered{
-      area = expand_box(entity.bounding_box, ROBOT_SEARCH_DISTANCE),
-      type = {"construction-robot", "logistic-robot"},
-      force = entity.force,
-    }
-    for _, robot in pairs(robots) do
-      if not entity_contains_item(robot) then
-        table.insert(grabbers, {entity=robot, count=0})
       end
     end
   end
@@ -597,7 +626,6 @@ function start_item_zoom(player, item, entity)
     controller_type = player.controller_type,
     character = player.character,
     character_name = player.character and player.character.name,
-    grabbers = {},
     count = entity_item_count(entity, item),
   }
   find_transport_line(entity, item, controller)
@@ -654,16 +682,46 @@ function entity_contains_item(entity, item)
   local found = inventory_contains_item(inventory, item)
   if found then return found end
 
+  -- Check more inventories
+
+  if entity.type == "inserter" then
+    if not entity.held_stack.valid_for_read then return end
+    if item and entity.held_stack.name ~= item then return end
+    return entity.held_stack.name
+
+  elseif HAS_TRANSPORT_LINE[entity.type] then
+    for i = 1, entity.get_max_transport_line_index() do
+      local line = entity.get_transport_line(i)
+      found = inventory_contains_item(line, item)
+      if found then return found end
+    end
+
+  elseif IS_ROBOT[entity.type] then
+    inventory = entity.get_inventory(defines.inventory.robot_cargo)
+    found = inventory_contains_item(inventory, item)
+    if found then return found end
+    inventory = entity.get_inventory(defines.inventory.robot_repair)
+    found = inventory_contains_item(inventory, item)
+    if found then return found end
+
+  elseif entity.type == "mining-drill" then
+    local target = entity.mining_target
+    if not target then return end
+    return recipe_contains_item(target.prototype.mineable_properties, item)
+
+  elseif entity.type == "roboport" then
+    inventory = entity.get_inventory(defines.inventory.roboport_material)
+    return inventory_contains_item(inventory, item)
+
   -- Check current recipe
 
-  if entity.type == "assembling-machine"
+  elseif entity.type == "assembling-machine"
   or entity.type == "furnace" then
     if entity.get_recipe() and entity.is_crafting() then
       return recipe_contains_item(entity.get_recipe(), item)
     end
-  end
 
-  if entity.type == "reactor"
+  elseif entity.type == "reactor"
   or entity.type == "burner-generator" then
     local product = entity.burner and entity.burner.currently_burning and entity.burner.currently_burning.burnt_result
     if product and product.type == "item" then
@@ -672,41 +730,6 @@ function entity_contains_item(entity, item)
     end
   end
 
-  -- Check more inventories
-
-  if IS_ROBOT[entity.type] then
-    inventory = entity.get_inventory(defines.inventory.robot_cargo)
-    found = inventory_contains_item(inventory, item)
-    if found then return found end
-    inventory = entity.get_inventory(defines.inventory.robot_repair)
-    found = inventory_contains_item(inventory, item)
-    if found then return found end
-  end
-
-  if entity.type == "inserter" then
-    if not entity.held_stack.valid_for_read then return end
-    if item and entity.held_stack.name ~= item then return end
-    return entity.held_stack.name
-  end
-
-  if entity.type == "mining-drill" then
-    local target = entity.mining_target
-    if not target then return end
-    return recipe_contains_item(target.prototype.mineable_properties, item)
-  end
-
-  if entity.type == "roboport" then
-    inventory = entity.get_inventory(defines.inventory.roboport_material)
-    return inventory_contains_item(inventory, item)
-  end
-
-  if HAS_TRANSPORT_LINE[entity.type] then
-    for i = 1, entity.get_max_transport_line_index() do
-      local line = entity.get_transport_line(i)
-      found = inventory_contains_item(line, item)
-      if found then return found end
-    end
-  end
 end
 
 -- Return item paramenter if it exists in the inventory.
