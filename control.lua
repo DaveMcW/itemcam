@@ -35,6 +35,7 @@ local DY = {
   [defines.direction.south] = 1,
   [defines.direction.west] = 0,
 }
+local SPLITTER_SIDE = {-0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 0.5, 0.5}
 
 function on_init()
   global.zoom_controllers = {}
@@ -99,13 +100,14 @@ function on_tick_player(player, controller)
   local target = controller.entity
 
   -- Target was destroyed... but did something grab it?
-  if not target.valid and controller.entity_type == "item-entity" then
+  if not target.valid and controller.entity_type == "item-entity" and controller.grabbers then
     for _, grabber in pairs(controller.grabbers) do
       if grabber.entity.valid
       and grabber.entity.type == "inserter"
       and entity_contains_item(grabber.entity, controller.item)
       and grabber.entity.held_stack.count > grabber.count then
         target = grabber.entity
+        controller.grabbers = nil
         break
       end
     end
@@ -113,7 +115,7 @@ function on_tick_player(player, controller)
 
   -- Target was destroyed
   if not target.valid then
-    controller.grabbers = {}
+    controller.grabbers = nil
     return
   end
 
@@ -169,11 +171,16 @@ function on_tick_player(player, controller)
     if HAS_TRANSPORT_LINE[target.type] then
       info = get_line_info(controller.line, target)
       -- Stop at the end of the belt
-      if controller.belt_progress < info.length then
+      if target.type == "splitter" then
+        if controller.belt_progress < 1 then
+          -- Ignore belt split inside splitter
+          controller.belt_progress = controller.belt_progress + target.prototype.belt_speed
+        end
+      elseif controller.belt_progress < info.length then
         controller.belt_progress = controller.belt_progress + target.prototype.belt_speed
       end
       -- Find new belt
-      if controller.belt_progress >= info.length
+      if (controller.belt_progress >= info.length and (target.type ~= "splitter" or info.index <= 4))
       or controller.line.get_item_count(controller.item) == 0 then
         local output_lines = get_output_lines(controller.line, target)
         local output_line = nil
@@ -187,11 +194,13 @@ function on_tick_player(player, controller)
           end
         end
         if output_line then
-          -- Reset progress
-          controller.belt_progress = controller.belt_progress - info.length
-          if controller.belt_progress > target.prototype.belt_speed
-          or controller.belt_progress < 0 then
-            controller.belt_progress = 0
+          -- Reset progress, except inside a splitter
+          if target.type ~= "splitter" or target ~= output_line.owner then
+            controller.belt_progress = controller.belt_progress - info.length
+            if controller.belt_progress > target.prototype.belt_speed
+            or controller.belt_progress < 0 then
+              controller.belt_progress = 0
+            end
           end
           -- Move to new belt
           controller.line = output_line
@@ -313,14 +322,27 @@ function on_tick_player(player, controller)
     if not info then
       info = get_line_info(controller.line, target)
     end
+    local progress
+    if target.type == "splitter" then
+      progress = controller.belt_progress
+    else
+      progress = controller.belt_progress / info.length
+    end
     -- Calculate a point on the transport line
-    local progress = controller.belt_progress / info.length
     position = {
       x = info.start_pos.x + progress * (info.end_pos.x - info.start_pos.x),
       y = info.start_pos.y + progress * (info.end_pos.y - info.start_pos.y),
     }
 
     if DEBUG then
+      rendering.draw_circle{
+        surface = target.surface,
+        target = position,
+        color = {r=1, g=1, b=1, a=1},
+        radius = 0.0005,
+        width = 1,
+        time_to_live = 120,
+      }
       rendering.draw_circle{
         surface = target.surface,
         target = info.start_pos,
@@ -502,9 +524,9 @@ function get_output_lines(line, belt)
   end
 
   -- 3. Search the belt entity outputs
-  for _, belt in pairs(belt.belt_neighbours.outputs) do
-    for i = 1, belt.get_max_transport_line_index() do
-      local output_line = belt.get_transport_line(i)
+  for _, output in pairs(belt.belt_neighbours.outputs) do
+    for i = 1, output.get_max_transport_line_index() do
+      local output_line = output.get_transport_line(i)
       if line.line_equals(output_line) then
         return {output_line}
       end
@@ -824,33 +846,24 @@ function get_line_info(line, belt)
     end_pos.x = start_pos.x + DX[belt.direction] * length
     end_pos.y = start_pos.y + DY[belt.direction] * length
 
-  elseif belt.type == "splitter" and line_index <= 4 then
+  elseif belt.type == "splitter" then
+    if line_index <= 4 then
     -- Input buffer takes up most of the belt
     -- https://forums.factorio.com/viewtopic.php?p=554468#p554468
-    length = 179 / 256
+      length = 179 / 256
+    else
+      length = 77 / 256
+    end
+    -- Pick the top or bottom side of the splitter
     local position = belt_info.start_pos
-    local sign = 1
-    if line_index <= 2 then
-      sign = -1
-    end
-    position.x = position.x - DY[belt.direction] * sign * 0.5
-    position.y = position.y + DX[belt.direction] * sign * 0.5
+    position.x = position.x - DY[belt.direction] * SPLITTER_SIDE[line_index]
+    position.y = position.y + DX[belt.direction] * SPLITTER_SIDE[line_index]
+    -- Pick the correct line on the belt
     start_pos = line_position(position, belt.direction, line_index)
-    end_pos.x = start_pos.x + DX[belt.direction] * length
-    end_pos.y = start_pos.y + DY[belt.direction] * length
-
-  elseif belt.type == "splitter" and line_index > 4 then
-    length = 77 / 256
-    local position = belt_info.end_pos
-    local sign = 1
-    if line_index <= 6 then
-      sign = -1
-    end
-    position.x = position.x - DY[belt.direction] * sign * 0.5
-    position.y = position.y + DX[belt.direction] * sign * 0.5
-    end_pos = line_position(position, belt.direction, line_index)
-    start_pos.x = end_pos.x - DX[belt.direction] * length
-    start_pos.y = end_pos.y - DY[belt.direction] * length
+    -- The dividing line between the input and output is variable,
+    -- so use one start_pos and end_pos for the entire splitter
+    end_pos.x = start_pos.x + DX[belt.direction]
+    end_pos.y = start_pos.y + DY[belt.direction]
   end
 
   return {
