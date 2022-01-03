@@ -15,10 +15,4 @@ data:extend{
     minimum_value = 1,
     maximum_value = 100,
   },
-  {
-    type = "bool-setting",
-    name = "item-zoom-debug",
-    setting_type = "runtime-per-user",
-    default_value = false,
-  },
 }

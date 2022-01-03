@@ -8,6 +8,7 @@
 
 require "util"
 
+local DEBUG = true
 local HAS_TRANSPORT_LINE = {
   ["transport-belt"] = true,
   ["underground-belt"] = true,
@@ -43,19 +44,23 @@ local SPLITTER_SIDE = {-0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 0.5, 0.5}
 
 function on_init()
   global.zoom_controllers = {}
+  on_configuration_changed()
 end
 
 function on_configuration_changed()
   for _, player in pairs(game.players) do
     exit_item_zoom(player)
   end
+  on_runtime_mod_setting_changed()
+end
+
+function on_runtime_mod_setting_changed()
+  local my_settings = settings
+  global.INSERTER_SEARCH_DISTANCE = my_settings.global["item-zoom-inserter-search-distance"].value
+  global.ROBOT_SEARCH_DISTANCE = my_settings.global["item-zoom-robot-search-distance"].value
 end
 
 function on_tick()
-  local my_settings = settings.global
-  global.INSERTER_SEARCH_DISTANCE = my_settings["item-zoom-inserter-search-distance"].value
-  global.ROBOT_SEARCH_DISTANCE = my_settings["item-zoom-robot-search-distance"].value
-
   for player_index, controller in pairs(global.zoom_controllers) do
     local player = game.get_player(player_index)
     if player.controller_type ~= defines.controllers.god then
@@ -111,7 +116,6 @@ function on_player_selected_area(event)
 end
 
 function on_tick_player(player, controller)
-  local DEBUG = settings.get_player_settings(player.index)["item-zoom-debug"].value
   local target = controller.entity
 
   -- Target was destroyed... but did something grab it?
@@ -122,7 +126,6 @@ function on_tick_player(player, controller)
       and entity_contains_item(grabber.entity, controller.item)
       and grabber.entity.held_stack.count > grabber.count then
         target = grabber.entity
-        controller.grabbers = nil
         break
       end
     end
@@ -160,46 +163,28 @@ function on_tick_player(player, controller)
         and grabber.entity.held_stack_position.y == grabber.entity.pickup_position.y
         and grabber.entity.held_stack.count > grabber.count then
           target = grabber.entity
-          controller.grabbers = nil
           break
         elseif IS_ROBOT[grabber.entity.type]
         and target.position.x == grabber.entity.position.x
         and target.position.y == grabber.entity.position.y then
           target = grabber.entity
-          controller.grabbers = nil
           break
         end
       end
     end
 
-  elseif (target.type == "inserter" and not target.drop_target) and controller.grabbers then
+  elseif (HAS_TRANSPORT_LINE[target.type] or target.type == "inserter")
+    and not target.drop_target
+    and controller.grabbers then
     for _, grabber in pairs(controller.grabbers) do
       if grabber.entity.valid
       and grabber.entity.type == "inserter"
       and entity_contains_item(grabber.entity, controller.item)
       and grabber.entity.held_stack.count > grabber.count then
         target = grabber.entity
-        controller.grabbers = nil
+        -- Use current position instead of inserter.pickup_position
         controller.pickup_position = target.held_stack_position
         break
-      end
-    end
-
-  elseif HAS_TRANSPORT_LINE[target.type] then
-    if controller.grabbers then
-      for _, grabber in pairs(controller.grabbers) do
-        if grabber.entity.valid
-        and grabber.entity.type == "inserter"
-        and entity_contains_item(grabber.entity, controller.item)
-        and grabber.entity.held_stack.count > grabber.count then
-
-          -- TODO: Compare held_stack_position to belt item position
-
-          target = grabber.entity
-          controller.grabbers = nil
-          controller.pickup_position = target.held_stack_position
-          break
-        end
       end
     end
 
@@ -240,9 +225,6 @@ function on_tick_player(player, controller)
           end
           -- Move to new belt
           controller.line = output_line
-          if target ~= output_line.owner then
-            controller.grabbers = nil
-          end
           target = output_line.owner
           info = nil
         end
@@ -259,7 +241,6 @@ function on_tick_player(player, controller)
         if (target.type == "inserter"
         or entity_contains_item(target.drop_target, controller.item)) then
           target = target.drop_target
-          controller.grabbers = nil
           find_transport_line(target, controller)
           if IS_CRAFTING_MACHINE[target.type] then
             controller.item = nil
@@ -274,7 +255,6 @@ function on_tick_player(player, controller)
         for _, item in pairs(items) do
           if item.stack.name == controller.item then
             target = item
-            controller.grabbers = nil
             break
           end
         end
@@ -290,13 +270,11 @@ function on_tick_player(player, controller)
       if found then
         if entity_contains_item(found, controller.item) then
           target = found
-          controller.grabbers = nil
         else
           -- Did an inserter grab the item in the same tick?
           found = find_picking_inserter(found, controller.item)
           if found then
             target = found
-            controller.grabbers = nil
           end
         end
       end
@@ -311,13 +289,11 @@ function on_tick_player(player, controller)
       if found then
         if entity_contains_item(found, controller.item) then
           target = found
-          controller.grabbers = nil
         else
           -- Did an inserter grab the item in the same tick?
           found = find_picking_inserter(found, controller.item)
           if found then
             target = found
-            controller.grabbers = nil
           end
         end
       end
@@ -427,7 +403,9 @@ function on_tick_player(player, controller)
   end
 
   -- Don't trust inserters pointing at a train
-  if target.type == "cargo-wagon" or target.type == "artillery-wagon" then
+  if controller.entity ~= target
+  or target.type == "cargo-wagon"
+  or target.type == "artillery-wagon" then
     controller.grabbers = nil
   end
 
@@ -1009,6 +987,7 @@ end
 
 script.on_init(on_init)
 script.on_configuration_changed(on_configuration_changed)
+script.on_event(defines.events.on_runtime_mod_setting_changed, on_runtime_mod_setting_changed)
 script.on_event(defines.events.on_tick, on_tick)
 script.on_event(defines.events.on_player_selected_area, on_player_selected_area)
 script.on_event(defines.events.on_player_alt_selected_area, on_player_selected_area)
