@@ -22,7 +22,7 @@ local shortcut = {
   item_to_spawn = "item-zoom",
   toggleable = true,
   icon = {
-    filename = "__base__/graphics/icons/shortcut-toolbar/mip/new-upgrade-planner-x32-white.png",
+    filename = "__item-zoom__/graphics/item-zoom-x32.png",
     flags = {"gui-icon"},
     mipmap_count = 2,
     priority = "extra-high-no-scale",
@@ -30,10 +30,8 @@ local shortcut = {
     size = 32
   },
   small_icon = {
-    filename = "__base__/graphics/icons/shortcut-toolbar/mip/new-upgrade-planner-x24-white.png",
-    flags = {
-      "gui-icon"
-    },
+    filename = "__item-zoom__/graphics/item-zoom-x24.png",
+    flags = {"gui-icon"},
     mipmap_count = 2,
     priority = "extra-high-no-scale",
     scale = 0.5,
@@ -41,4 +39,3 @@ local shortcut = {
   },
 }
 data:extend{shortcut}
-

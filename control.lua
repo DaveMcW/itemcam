@@ -557,9 +557,7 @@ function find_grabbers(entity)
 
   shuffle(grabbers)
 
-  if entity.type == "loader-1x1" or entity.type == "loader-1x2" then
-    -- TODO: Loaders
-  end
+  -- TODO: Loaders
 
   return grabbers
 end
@@ -796,9 +794,8 @@ function entity_contains_item(entity, item)
 
   -- Check current recipe
 
-  elseif entity.type == "assembling-machine"
-  or entity.type == "furnace" then
-    if entity.get_recipe() and entity.is_crafting() then
+  elseif entity.type == "assembling-machine" or entity.type == "furnace" then
+    if entity.is_crafting() then
       return recipe_contains_item(entity.get_recipe(), item)
     end
 
