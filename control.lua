@@ -15,8 +15,8 @@ local HAS_TRANSPORT_LINE = {
   ["underground-belt"] = true,
   ["splitter"] = true,
   ["linked-belt"] = true,
+  ["loader"] = true,
   ["loader-1x1"] = true,
-  ["loader-1x2"] = true,
 }
 local IS_CRAFTING_MACHINE = {
   ["assembling-machine"] = true,
@@ -47,8 +47,36 @@ local TRANSPORT_LINE_LENGTH = {
   ["underground-belt"] = 2,
   ["splitter"] = 2,
   ["linked-belt"] = 2,
-  ["loader-1x1"] = 4,
-  ["loader-1x2"] = 8,
+  ["loader"] = 2,
+  ["loader-1x1"] = 2,
+}
+-- CURVE_LENGTH[input_direction][output_direction][line_index]
+-- Returns number of items that can fit on that side of the belt
+local CURVE_LENGTH = {
+  [defines.direction.north] = {
+    [defines.direction.north] = {4, 4},
+    [defines.direction.east] = {4, 1},
+    [defines.direction.south] = {0, 0},
+    [defines.direction.west] = {1, 4},
+  },
+  [defines.direction.east] = {
+    [defines.direction.north] = {1, 4},
+    [defines.direction.east] = {4, 4},
+    [defines.direction.south] = {4, 1},
+    [defines.direction.west] = {0, 0},
+  },
+  [defines.direction.south] = {
+    [defines.direction.north] = {0, 0},
+    [defines.direction.east] = {1, 4},
+    [defines.direction.south] = {4, 4},
+    [defines.direction.west] = {4, 1},
+  },
+  [defines.direction.west] = {
+    [defines.direction.north] = {4, 1},
+    [defines.direction.east] = {0, 0},
+    [defines.direction.south] = {1, 4},
+    [defines.direction.west] = {4, 4},
+  },
 }
 
 
@@ -212,8 +240,48 @@ function on_tick_player(player, controller)
 
       -- Stop if the belt is full
       if speed > 0 and not controller.first_line then
-        local checked = {}
-        if not find_transport_gap(controller.line, target, info.index, checked) then
+
+        -- Search cached entities for a gap
+        local found_gap = false
+        controller.gaps[target.unit_number] = nil
+        for key, gap in pairs(controller.gaps) do
+          if gap.entity.valid and has_transport_gap(gap.line, gap.entity, gap.index, gap.old_direction) then
+            found_gap = true
+            if DEBUG then
+              rendering.draw_circle{
+                surface = gap.entity.surface,
+                target = gap.entity,
+                color = {r=0, g=1, b=0, a=1},
+                radius = 0.4,
+                width = 3,
+                time_to_live = 60,
+              }
+            end
+            break
+          end
+        end
+
+        -- Search entire transport network for a gap
+        if not found_gap then
+          local checked = {}
+          found_gap = find_transport_gap(controller.line, target, info.index, checked)
+          if type(found_gap) == "table" then
+            controller.gaps[found_gap.entity.unit_number] = found_gap
+            if DEBUG then
+              rendering.draw_circle{
+                surface = found_gap.entity.surface,
+                target = found_gap.entity,
+                color = {r=0, g=1, b=1, a=1},
+                radius = 0.4,
+                width = 3,
+                time_to_live = 60,
+              }
+            end
+          end
+        end
+
+        -- There is no gap, the belt is full
+        if not found_gap then
           speed = 0
         end
       end
@@ -221,7 +289,7 @@ function on_tick_player(player, controller)
       controller.belt_progress = controller.belt_progress + speed
 
       -- Did the item move to a different transport line?
-      if (controller.belt_progress >= info.length and (target.type ~= "splitter" or info.index <= 4))
+      if (controller.belt_progress >= info.length and (target.type ~= "splitter" or info.index <= 4 or controller.belt_progress >= 1))
       or controller.line.get_item_count(controller.item) == 0 then
         local output_lines = get_output_lines(controller.line, target, info.index)
         local output_line = nil
@@ -565,21 +633,32 @@ function find_transport_line(entity, controller)
   -- TODO: Use inserter drop position to eliminate some lines
 
   if not HAS_TRANSPORT_LINE[entity.type] then return end
+
+  -- Pick a random line
+  local indexes = {}
   for i = 1, entity.get_max_transport_line_index() do
+    table.insert(indexes, i)
+  end
+  shuffle(indexes)
+  game.print(serpent.dump(indexes))
+
+  for _, i in pairs(indexes) do
     local line = entity.get_transport_line(i)
     if line.get_item_count(controller.item) > 0 then
       controller.line = line
       controller.first_line = true
+      controller.gaps = {}
 
       local info = get_line_info(line, entity)
       if entity.type == "transport-belt" then
         controller.belt_progress = info.length / 2
       elseif entity.type == "splitter" and info.index <= 4 then
         controller.belt_progress = 0.5
+      elseif entity.type == "loader" then
+        -- TODO: Make more precise
+        controller.belt_progress = 1
       elseif entity.type == "loader-1x1" then
         controller.belt_progress = 0.5
-      elseif entity.type == "loader-1x2" then
-        controller.belt_progress = 1
       else
         controller.belt_progress = 0
       end
@@ -1038,6 +1117,11 @@ end
 
 function find_transport_gap(line, belt, index, checked)
   if belt.type == "splitter" and index < 4 then
+    if checked[belt.unit_number.."-"..index] then
+      return nil
+    end
+    checked[belt.unit_number.."-"..index] = true
+
     if index > 2
       then index = index - 2
     end
@@ -1046,65 +1130,63 @@ function find_transport_gap(line, belt, index, checked)
 
     if #line + #output1 + #output2 < 6 then
       -- Found a gap!
-      if DEBUG then
-        rendering.draw_circle{
-          surface = belt.surface,
-          target = belt,
-          color = {r=0.3, g=1, b=0, a=1},
-          radius = 0.4,
-          width = 2,
-          time_to_live = 2,
-        }
-      end
-      return true
+      return {entity=belt, line=line, index=index}
     end
-    checked[line] = true
 
-    -- Recurse over both output lines
-    return find_transport_gap(output1, belt, index+4, checked)
+    if (belt.splitter_output_priority == "right" and index <= 2)
+    or (belt.splitter_output_priority == "left" and index > 2) then
+      -- Low priority, we need gaps in BOTH output lines
+      if find_transport_gap(output1, belt, index+4, checked)
+      and find_transport_gap(output2, belt, index+6, checked) then
+        return true
+      end
+    else
+      -- Find a gap in either output line
+      return find_transport_gap(output1, belt, index+4, checked)
       or find_transport_gap(output2, belt, index+6, checked)
+    end
   end
 
-  while line do
-    if checked[line] then
-      return false
+  local old_belt, old_line, old_index
+
+  while true do
+    old_belt = belt
+    old_line = line
+    old_index = index
+
+    -- Read next line
+    line, index = get_output_line_and_index(old_line, old_belt, old_index)
+    if line then
+      belt = line.owner
+    else
+      return nil
     end
-    if #line < max_line_length(belt, index) then
+
+    if checked[belt.unit_number.."-"..index] then
+      return nil
+    end
+    checked[belt.unit_number.."-"..index] = true
+
+    if has_transport_gap(line, belt, index, old_belt.direction) then
       -- Found a gap!
-      if DEBUG then
-        rendering.draw_circle{
-          surface = belt.surface,
-          target = belt,
-          color = {r=0, g=1, b=0, a=1},
-          radius = 0.4,
-          width = 2,
-          time_to_live = 300,
-        }
-      end
-      return true
+      return {entity=belt, line=line, index=index, old_direction=old_belt.direction}
     end
-    checked[line] = true
+
+    -- Mark the belt as full
     if DEBUG then
       rendering.draw_rectangle{
         color = {r=0, g=0, b=0, a=1},
         filled = false,
-        width = 2,
+        width = 3,
         left_top = belt,
-        left_top_offset = {-0.3, -0.3},
+        left_top_offset = {-0.2, -0.2},
         right_bottom = belt,
-        right_bottom_offset = {0.3, 0.3},
+        right_bottom_offset = {0.2, 0.2},
         surface = belt.surface,
         time_to_live = 2,
       }
     end
-    -- Read next line
-    line, index = get_output_line_and_index(line, belt, index)
-    if line then
-      belt = line.owner
-    end
   end
-
-  return false
 end
 
 function max_line_length(belt, index)
@@ -1120,6 +1202,23 @@ function max_line_length(belt, index)
   else
     return TRANSPORT_LINE_LENGTH[belt.type]
   end
+end
+
+function has_transport_gap(line, belt, index, old_direction)
+  -- Curved belt
+  if belt.type == "transport-belt"
+  and belt.direction ~= old_belt_direction
+  and #belt.belt_neighbours.inputs == 1 then
+    return #line < CURVE_LENGTH[old_direction][belt.direction][index]
+  end
+  -- Splitter
+  if belt.type == "splitter" and index < 4 then
+    if index > 2
+      then index = index - 2
+    end
+    return #line + #belt.get_transport_line(index+4) + #belt.get_transport_line(index+6) < 6
+  end
+  return #line < max_line_length(belt, index)
 end
 
 
