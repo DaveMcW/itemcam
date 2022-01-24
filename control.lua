@@ -6,7 +6,8 @@
 -- 5. Inserter item transfer
 
 
-require "util"
+local util = require "util"
+local TransportGraph = require "lualib.transport-graph"
 
 -- Constants
 local DEBUG = true
@@ -96,6 +97,7 @@ function on_runtime_mod_setting_changed()
   local my_settings = settings
   global.INSERTER_SEARCH_DISTANCE = my_settings.global["item-zoom-inserter-search-distance"].value
   global.ROBOT_SEARCH_DISTANCE = my_settings.global["item-zoom-robot-search-distance"].value
+  global.BELT_SEARCH_RATE = my_settings.global["item-zoom-belt-search-rate"].value
 end
 
 function on_tick()
@@ -640,7 +642,6 @@ function find_transport_line(entity, controller)
     table.insert(indexes, i)
   end
   shuffle(indexes)
-  game.print(serpent.dump(indexes))
 
   for _, i in pairs(indexes) do
     local line = entity.get_transport_line(i)
@@ -648,6 +649,7 @@ function find_transport_line(entity, controller)
       controller.line = line
       controller.first_line = true
       controller.gaps = {}
+      TransportGraph.new(controller, entity, line, i)
 
       local info = get_line_info(line, entity)
       if entity.type == "transport-belt" then
@@ -829,7 +831,16 @@ function entity_contains_item(entity, item)
     return entity.held_stack.name
 
   elseif HAS_TRANSPORT_LINE[entity.type] then
+    local indexes = {}
     for i = 1, entity.get_max_transport_line_index() do
+      table.insert(indexes, i)
+    end
+    if item == nil then
+      -- Pick a random line
+      shuffle(indexes)
+    end
+
+    for _, i in pairs(indexes) do
       local line = entity.get_transport_line(i)
       found = inventory_contains_item(line, item)
       if found then return found end
@@ -1078,15 +1089,17 @@ end
 function get_output_line_and_index(line, belt, index)
   -- 1. Search inside the belt entity and the linked neighbor
   if belt.type == "underground-belt" and belt.belt_to_ground_type == "input" then
-    if index <= 2 then
-      return belt.get_transport_line(index+2), index+2
-    end
     local neighbor = belt.neighbours
     if not neighbor then
       -- Dead end
       return nil, nil
+    elseif index <= 2 then
+      -- Underground section
+      return belt.get_transport_line(index+2), index+2
+    else
+      -- Underground exit
+      return neighbor.get_transport_line(index-2), index-2
     end
-    return neighbor.get_transport_line(index-2), index-2
   end
   if belt.type == "linked-belt" and belt.linked_belt_type == "input" then
     local neighbor = belt.linked_belt_neighbour
@@ -1097,7 +1110,7 @@ function get_output_line_and_index(line, belt, index)
 
   -- 2. Search the belt entity outputs
   for _, output in pairs(belt.belt_neighbours.outputs) do
-    for i = 1, output.get_max_transport_line_index() do
+    for i = 1, 2 do
       local output_line = output.get_transport_line(i)
       if line.line_equals(output_line) then
         return output_line, i
@@ -1108,7 +1121,7 @@ function get_output_line_and_index(line, belt, index)
   -- 3. If the line does not match because the internal transport line changed,
   -- use LuaTransportBelt.output_lines to find the new line
   local output_line = line.output_lines[1]
-  if not output_line then
+  if not output_line or output_line == line then
     -- Dead end
     return nil, nil
   end
@@ -1201,6 +1214,55 @@ function max_line_length(belt, index)
 
   else
     return TRANSPORT_LINE_LENGTH[belt.type]
+  end
+end
+
+function get_same_direction_input_line(belt, line, index)
+  -- 1. Search inside the belt entity and the linked neighbor
+  if belt.type == "underground-belt" and belt.belt_to_ground_type == "output" then
+    local neighbor = belt.neighbours
+    if not neighbor then
+      -- Dead end
+      return
+    else
+      -- Underground section
+      return neighbor.get_transport_line(index+2)
+    end
+  end
+  if belt.type == "linked-belt" and belt.linked_belt_type == "output" then
+    local neighbor = belt.linked_belt_neighbour
+    if neighbor then
+      return neighbor.get_transport_line(index)
+    end
+  end
+
+  -- 2. Search the belt entity inputs
+  for _, input in pairs(belt.belt_neighbours.inputs) do
+    if input.direction == belt.direction then
+      if input.type == "splitter" then
+        local input_line = input.get_transport_line(index+4)
+        if line.line_equals(input_line) then
+          return input_line
+        end
+        input_line = input.get_transport_line(index+6)
+        if line.line_equals(input_line) then
+          return input_line
+        end
+      else
+        local input_line = input.get_transport_line(index)
+        if line.line_equals(input_line) then
+          return input_line
+        end
+      end
+    end
+  end
+
+  -- 3. If the line does not match because the internal transport line changed,
+  -- use LuaTransportBelt.input_lines to find the new line
+  for _, input_line in pairs(line.input_lines) do
+    if line ~= input_line and input_line.owner.direction == belt.direction then
+      return input_line
+    end
   end
 end
 
