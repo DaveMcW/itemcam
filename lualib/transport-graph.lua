@@ -1,6 +1,5 @@
 local util = require "util"
 
-local M = {}
 
 --[[
   blockers - side merges and low-priority splitters
@@ -19,6 +18,7 @@ local M = {}
 
 --]]
 
+local DEBUG = true
 local DX = {
   [defines.direction.north] = 0,
   [defines.direction.east] = 1,
@@ -157,12 +157,12 @@ local function add_sink(edge, conveyor)
 
   -- Add sink
   if found then
-    edge[conveyor.belt.unit_number] = conveyor
+    edge.sinks[conveyor.belt.unit_number] = conveyor
   end
 end
 
 --- Calculate transport line index from LuaEntity and LuaTransportLine
-function get_line_index(belt, line)
+local function get_line_index(belt, line)
   for i = 1, belt.get_max_transport_line_index() do
     if line == belt.get_transport_line(i) then
       return i
@@ -172,7 +172,7 @@ function get_line_index(belt, line)
 end
 
 --- Return the downstream conveyor
-function get_output_conveyor(conveyor)
+local function get_output_conveyor(conveyor)
   local belt = conveyor.belt
   local line = conveyor.line
   local index = conveyor.index
@@ -224,9 +224,34 @@ function get_output_conveyor(conveyor)
   return new_conveyor(owner, output_line, get_line_index(owner, output_line))
 end
 
-local function conveyor_gap(conveyor)
+local function get_side_merge(input, output)
+  -- TODO: Implement
+  return false
+end
+
+--- Is there a belt gap on this entity?
+local function conveyor_has_gap(conveyor)
   if not conveyor then return false end
   if not conveyor.line.valid then return false end
+
+
+  if DEBUG then
+    rendering.draw_circle{
+      surface = conveyor.belt.surface,
+      target = conveyor.belt,
+      color = {r=0, g=0, b=1, a=1},
+      radius = 0.3,
+      width = 2,
+      time_to_live = 2,
+    }
+  end
+
+  -- Count items
+  if #conveyor.line < conveyor.capacity then
+    return true
+  end
+
+  -- Curved belt has fractional capacity, we need a more powerful test
 
 
   return false
@@ -256,28 +281,74 @@ local function expand_edge(graph, edge)
       add_sink(edge, conveyor)
       edge.tail = conveyor
       edge.middle = nil
+
+      -- Treat both input lanes the same. This may be unrealistic if
+      -- there is input_priority, but it is good enough for now.
       local index = conveyor.index
       if index > 2 then
         index = index - 2
       end
-      add_edge(graph, new_conveyor(conveyor.belt, conveyor.belt.get_transport_line(index+4), index+4))
-      add_edge(graph, new_conveyor(conveyor.belt, conveyor.belt.get_transport_line(index+6), index+6))
+
+      -- Splitter filter subtracts 1 edge
+      local output1_enabled = true
+      local output2_enabled = true
+      local output_priority = conveyor.belt.output_priority
+      if output_priority ~= "none" then
+        local filter = conveyor.belt.splitter_filter
+        if filter then
+          if filter.name == graph.item then
+            output1_enabled = (output_priority == "left")
+            output2_enabled = (output_priority == "right")
+          else
+            output1_enabled = (output_priority == "right")
+            output2_enabled = (output_priority == "left")
+          end
+        end
+      end
+
+      -- Add edge #1
+      if output1_enabled then
+        table.insert(edge.outputs, add_edge(
+          graph,
+          new_conveyor(conveyor.belt, conveyor.belt.get_transport_line(index+4), index+4)
+        ))
+      end
+
+      -- Add edge #2
+      if output2_enabled then
+        table.insert(edge.outputs, add_edge(
+          graph,
+          new_conveyor(conveyor.belt, conveyor.belt.get_transport_line(index+6), index+6)
+        ))
+      end
     else
       -- Side merge creates 1 new edge
       local side_merge = get_side_merge(edge.middle, conveyor)
       if side_merge then
         edge.tail = edge.middle
         edge.middle = nil
-        add_edge(graph, conveyor)
+        table.insert(edge.outputs, add_edge(graph, conveyor))
       else
         -- Expand the current edge
         add_sink(edge, conveyor)
         edge.middle = conveyor
+
+        if DEBUG then
+          rendering.draw_circle{
+            surface = conveyor.belt.surface,
+            target = conveyor.belt,
+            color = {r=0, g=1, b=0, a=1},
+            radius = 0.4,
+            width = 2,
+            time_to_live = 60,
+          }
+        end
+
       end
     end
 
     -- Stop searching if we find a gap
-    if conveyor_gap(conveyor) then
+    if conveyor_has_gap(conveyor) then
       return true
     end
 
@@ -285,13 +356,60 @@ local function expand_edge(graph, edge)
   return false
 end
 
-function M.new(belt, line, index)
+--- Is there a belt gap somewhere on this edge?
+local function edge_has_gap(graph, edge)
+  -- Only visit the edge once per tick
+  if edge.tick == game.tick then
+    return false
+  end
+  edge.tick = game.tick
+
+  -- TODO: check current_conveyor.line.valid
+
+  -- Check middle for gaps
+  if graph.current_conveyor.line ~= edge.middle.line and conveyor_has_gap(edge.middle) then
+    return true
+  end
+
+  -- Ignore upstream sinks in the current edge
+  local disable_upstream_sinks = false
+  if edge.head.line.valid and edge.head.line == graph.current_edge.head.line then
+    disable_upstream_sinks = true
+  end
+
+  -- Check sinks for gaps
+  for _, sink in pairs(edge.sinks) do
+    if (not disable_upstream_sinks or not sink.disabled) and conveyor_has_gap(sink) then
+      return true
+    end
+  end
+
+  -- Expand the edge until we reach a vertex
+  if expand_edge(graph, edge) then
+    return true
+  end
+
+  -- Recursively check the downstream edges
+  for _, output in pairs(edge.outputs) do
+    if edge_has_gap(graph, output) then
+      return true
+    end
+  end
+
+  return false
+end
+
+
+-- Module definition
+local M = {}
+
+function M.new(item, belt, line, index)
   local graph = {
-    current_conveyor = {belt=belt, line=line, index=index},
+    item = item,
+    current_conveyor = new_conveyor(belt, line, index),
     edges = {},
-    is_complete = false,
   }
-  graph.current_edge = add_edge(graph, current_conveyor)
+  graph.current_edge = add_edge(graph, graph.current_conveyor)
   return graph
 end
 
@@ -301,7 +419,7 @@ function M.move_to(graph, belt, line, index)
   and graph.current_edge.tail.line.valid
   and graph.current_conveyor.line.valid
   and graph.current_end.line == graph.current_conveyor.line then
-    for _, edge in pairs(graph.edges) do
+    for _, edge in pairs(graph.current_edge.outputs) do
       if edge.head.line.valid and edge.head.line == line then
         graph.current_edge = edge
         break
@@ -310,9 +428,10 @@ function M.move_to(graph, belt, line, index)
   end
 
   -- Update position
-  graph.current_conveyor = {belt=belt, line=line, index=index}
+  graph.current_conveyor = new_conveyor(belt, line, index)
 
   -- Disable sinks
+  -- TODO: Stop if the current edge loops back on itself
   if graph.current_edge.sinks[belt.unit_number] then
     graph.current_edge.sinks[belt.unit_number].disabled = true
   end
@@ -321,28 +440,7 @@ end
 function M.has_gap(graph)
   graph.search_count = 0
 
-  -- 1. Check middle for gaps
-  if conveyor_gap(graph.current_edge.middle) then
-    return true
-  end
-
-  -- 2. Check sinks for gaps
-  for _, sink in pairs(graph.current_edge.sinks) do
-    if sink.enabled and conveyor_gap(sink) then
-      return true
-    end
-  end
-
-  -- 3. Expand the edge until we reach a vertex
-  if expand_edge(graph, graph.current_edge) then
-    return true
-  end
-
-  -- 4. Check other edges for gaps
-
+  return edge_has_gap(graph, graph.current_edge)
 end
-
-
-
 
 return M

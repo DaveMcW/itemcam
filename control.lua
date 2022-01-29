@@ -242,48 +242,8 @@ function on_tick_player(player, controller)
 
       -- Stop if the belt is full
       if speed > 0 and not controller.first_line then
-
-        -- Search cached entities for a gap
-        local found_gap = false
-        controller.gaps[target.unit_number] = nil
-        for key, gap in pairs(controller.gaps) do
-          if gap.entity.valid and has_transport_gap(gap.line, gap.entity, gap.index, gap.old_direction) then
-            found_gap = true
-            if DEBUG then
-              rendering.draw_circle{
-                surface = gap.entity.surface,
-                target = gap.entity,
-                color = {r=0, g=1, b=0, a=1},
-                radius = 0.4,
-                width = 3,
-                time_to_live = 60,
-              }
-            end
-            break
-          end
-        end
-
-        -- Search entire transport network for a gap
-        if not found_gap then
-          local checked = {}
-          found_gap = find_transport_gap(controller.line, target, info.index, checked)
-          if type(found_gap) == "table" then
-            controller.gaps[found_gap.entity.unit_number] = found_gap
-            if DEBUG then
-              rendering.draw_circle{
-                surface = found_gap.entity.surface,
-                target = found_gap.entity,
-                color = {r=0, g=1, b=1, a=1},
-                radius = 0.4,
-                width = 3,
-                time_to_live = 60,
-              }
-            end
-          end
-        end
-
-        -- There is no gap, the belt is full
-        if not found_gap then
+        if not TransportGraph.has_gap(controller.graph) then
+          -- There is no gap, the belt is full
           speed = 0
         end
       end
@@ -317,6 +277,7 @@ function on_tick_player(player, controller)
           controller.line = output_line
           controller.first_line = nil
           target = output_line.owner
+          TransportGraph.move_to(controller.graph, target, output_line, info.index)
           info = nil
         end
       end
@@ -649,7 +610,7 @@ function find_transport_line(entity, controller)
       controller.line = line
       controller.first_line = true
       controller.gaps = {}
-      TransportGraph.new(controller, entity, line, i)
+      controller.graph = TransportGraph.new(controller.item, entity, line, i)
 
       local info = get_line_info(line, entity)
       if entity.type == "transport-belt" then
