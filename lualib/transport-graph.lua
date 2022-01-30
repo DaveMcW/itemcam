@@ -2,19 +2,15 @@ local util = require "util"
 
 
 --[[
-  blockers - side merges and low-priority splitters
-  grabbers - any one of these will keep the belt moving
-  splitters - reaching this will prune one branch
-
-  passing a grabber will prune it
-
   if we reach an already-pruned splitter, rebuild the map.
 
   grabbers in a circular branch are unpruneable
 
-  filter splitters are really just a belt
-
   https://en.wikipedia.org/wiki/Tarjan%27s_strongly_connected_components_algorithm
+
+  track the first splitter to have a gap
+
+  breadth-first splitter search
 
 --]]
 
@@ -213,7 +209,13 @@ local function get_output_conveyor(conveyor)
     end
   end
 
-  -- 3. If the line does not match because the internal transport line changed,
+  -- 3. Dead-end splitters are buggy, don't try to follow them.
+  -- https://forums.factorio.com/101435
+  if belt.type == "splitter" then
+    return nil
+  end
+
+  -- 4. If the line does not match because the internal transport line changed,
   -- use LuaTransportBelt.output_lines to find the new line
   local output_line = line.output_lines[1]
   if not output_line or output_line == line then
@@ -234,6 +236,10 @@ local function conveyor_has_gap(conveyor)
   if not conveyor then return false end
   if not conveyor.line.valid then return false end
 
+  -- Ignore starting belt
+  if conveyor.is_start then
+    return false
+  end
 
   if DEBUG then
     rendering.draw_circle{
@@ -292,16 +298,16 @@ local function expand_edge(graph, edge)
       -- Splitter filter subtracts 1 edge
       local output1_enabled = true
       local output2_enabled = true
-      local output_priority = conveyor.belt.output_priority
-      if output_priority ~= "none" then
+      local priority = conveyor.belt.splitter_output_priority
+      if priority ~= "none" then
         local filter = conveyor.belt.splitter_filter
         if filter then
           if filter.name == graph.item then
-            output1_enabled = (output_priority == "left")
-            output2_enabled = (output_priority == "right")
+            output1_enabled = (priority == "left")
+            output2_enabled = (priority == "right")
           else
-            output1_enabled = (output_priority == "right")
-            output2_enabled = (output_priority == "left")
+            output1_enabled = (priority == "right")
+            output2_enabled = (priority == "left")
           end
         end
       end
@@ -364,28 +370,30 @@ local function edge_has_gap(graph, edge)
   end
   edge.tick = game.tick
 
-  -- TODO: check current_conveyor.line.valid
-
   -- Check middle for gaps
-  if graph.current_conveyor.line ~= edge.middle.line and conveyor_has_gap(edge.middle) then
+  if edge.middle and edge.middle.line.valid
+  and (not graph.current_conveyor.line.valid or graph.current_conveyor.line ~= edge.middle.line)
+  and conveyor_has_gap(edge.middle) then
     return true
   end
 
-  -- Ignore upstream sinks in the current edge
-  local disable_upstream_sinks = false
-  if edge.head.line.valid and edge.head.line == graph.current_edge.head.line then
-    disable_upstream_sinks = true
-  end
+  if next(edge.sinks) then
+    -- Ignore upstream sinks in the current edge
+    local disable_upstream_sinks = false
+    if edge.head.line.valid and edge.head.line == graph.current_edge.head.line then
+      disable_upstream_sinks = true
+    end
 
-  -- Check sinks for gaps
-  for _, sink in pairs(edge.sinks) do
-    if (not disable_upstream_sinks or not sink.disabled) and conveyor_has_gap(sink) then
-      return true
+    -- Check sinks for gaps
+    for _, sink in pairs(edge.sinks) do
+      if (not disable_upstream_sinks or not sink.disabled) and conveyor_has_gap(sink) then
+        return true
+      end
     end
   end
 
   -- Expand the edge until we reach a vertex
-  if expand_edge(graph, edge) then
+  if edge.middle and expand_edge(graph, edge) then
     return true
   end
 
@@ -410,6 +418,7 @@ function M.new(item, belt, line, index)
     edges = {},
   }
   graph.current_edge = add_edge(graph, graph.current_conveyor)
+  graph.current_edge.middle.is_start = true
   return graph
 end
 
@@ -418,7 +427,7 @@ function M.move_to(graph, belt, line, index)
   if graph.current_edge.tail
   and graph.current_edge.tail.line.valid
   and graph.current_conveyor.line.valid
-  and graph.current_end.line == graph.current_conveyor.line then
+  and graph.current_edge.tail.line == graph.current_conveyor.line then
     for _, edge in pairs(graph.current_edge.outputs) do
       if edge.head.line.valid and edge.head.line == line then
         graph.current_edge = edge
