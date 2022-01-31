@@ -8,8 +8,6 @@ local util = require "util"
 
   https://en.wikipedia.org/wiki/Tarjan%27s_strongly_connected_components_algorithm
 
-  track the first splitter to have a gap
-
   breadth-first splitter search
 
 --]]
@@ -109,11 +107,17 @@ local function new_conveyor(belt, line, index)
     capacity = 2,
   }
 
-  -- Round down capacity for curved belts
   if conveyor.curve_type == "inner" then
+    -- Round down capacity for curved belts
     conveyor.capacity = 1
   elseif belt.type == "transport-belt" then
+    -- Increased capacity for straight belts and outer curves
     conveyor.capacity = 4
+  elseif index > 2 and belt.type == "underground-belt" then
+    -- Variable length for underground section
+    local p = belt.neighbours.position
+    local distance = math.abs(belt.position.x - p.x) + math.abs(belt.position.y - p.y)
+    conveyor.capacity = distance * 4
   end
 
   return conveyor
@@ -257,19 +261,21 @@ local function conveyor_has_gap(conveyor)
     return true
   end
 
-  -- Curved belt has fractional capacity, we need a more powerful test
+  -- TODO: Curved belt has fractional capacity, we need a more powerful test
 
 
   return false
 end
 
---- Follow the edge of the graph, returning true if a gap is found
-local function expand_edge(graph, edge)
+--- Follow the edge of the graph
+---@return boolean true if a gap is found or the limit is reached
+local function expand_edge(graph, edge, limit)
+  local count = 0
   while edge.middle do
 
     -- Limit search rate
-    graph.search_count = graph.search_count + 1
-    if graph.search_count > global.BELT_SEARCH_RATE then
+    count = count + 1
+    if count > limit then
       return true
     end
 
@@ -363,10 +369,11 @@ local function expand_edge(graph, edge)
 end
 
 --- Is there a belt gap somewhere on this edge?
-local function edge_has_gap(graph, edge)
+---@return table conveyor The matching output line of the first splitter
+local function edge_has_gap(graph, edge, limit)
   -- Only visit the edge once per tick
   if edge.tick == game.tick then
-    return false
+    return nil
   end
   edge.tick = game.tick
 
@@ -374,7 +381,7 @@ local function edge_has_gap(graph, edge)
   if edge.middle and edge.middle.line.valid
   and (not graph.current_conveyor.line.valid or graph.current_conveyor.line ~= edge.middle.line)
   and conveyor_has_gap(edge.middle) then
-    return true
+    return edge.head
   end
 
   if next(edge.sinks) then
@@ -387,24 +394,24 @@ local function edge_has_gap(graph, edge)
     -- Check sinks for gaps
     for _, sink in pairs(edge.sinks) do
       if (not disable_upstream_sinks or not sink.disabled) and conveyor_has_gap(sink) then
-        return true
+        return edge.head
       end
     end
   end
 
   -- Expand the edge until we reach a vertex
-  if edge.middle and expand_edge(graph, edge) then
-    return true
+  if edge.middle and expand_edge(graph, edge, limit) then
+    return edge.head
   end
 
   -- Recursively check the downstream edges
+  local result = nil
   for _, output in pairs(edge.outputs) do
-    if edge_has_gap(graph, output) then
-      return true
+    if edge_has_gap(graph, output, math.ceil(limit / #edge.outputs)) then
+      result = output.head
     end
   end
-
-  return false
+  return result
 end
 
 
@@ -446,10 +453,10 @@ function M.move_to(graph, belt, line, index)
   end
 end
 
+--- Is there a belt gap somewhere downstream?
+---@return table conveyor The matching output line of the first splitter
 function M.has_gap(graph)
-  graph.search_count = 0
-
-  return edge_has_gap(graph, graph.current_edge)
+  return edge_has_gap(graph, graph.current_edge, global.BELT_SEARCH_RATE)
 end
 
 return M

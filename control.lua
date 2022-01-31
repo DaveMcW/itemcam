@@ -43,43 +43,6 @@ local DY = {
   [defines.direction.west] = 0,
 }
 local SPLITTER_SIDE = {-0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 0.5, 0.5}
-local TRANSPORT_LINE_LENGTH = {
-  ["transport-belt"] = 4,
-  ["underground-belt"] = 2,
-  ["splitter"] = 2,
-  ["linked-belt"] = 2,
-  ["loader"] = 2,
-  ["loader-1x1"] = 2,
-}
--- CURVE_LENGTH[input_direction][output_direction][line_index]
--- Returns number of items that can fit on that side of the belt
-local CURVE_LENGTH = {
-  [defines.direction.north] = {
-    [defines.direction.north] = {4, 4},
-    [defines.direction.east] = {4, 1},
-    [defines.direction.south] = {0, 0},
-    [defines.direction.west] = {1, 4},
-  },
-  [defines.direction.east] = {
-    [defines.direction.north] = {1, 4},
-    [defines.direction.east] = {4, 4},
-    [defines.direction.south] = {4, 1},
-    [defines.direction.west] = {0, 0},
-  },
-  [defines.direction.south] = {
-    [defines.direction.north] = {0, 0},
-    [defines.direction.east] = {1, 4},
-    [defines.direction.south] = {4, 4},
-    [defines.direction.west] = {4, 1},
-  },
-  [defines.direction.west] = {
-    [defines.direction.north] = {4, 1},
-    [defines.direction.east] = {0, 0},
-    [defines.direction.south] = {1, 4},
-    [defines.direction.west] = {4, 4},
-  },
-}
-
 
 function on_init()
   global.zoom_controllers = {}
@@ -241,8 +204,13 @@ function on_tick_player(player, controller)
       end
 
       -- Stop if the belt is full
+      local splitter_output_line = nil
       if speed > 0 and not controller.first_line then
-        if not TransportGraph.has_gap(controller.graph) then
+        local gap = TransportGraph.has_gap(controller.graph)
+        if gap then
+          -- Remember which side of the splitter the gap is on
+          splitter_output_line = gap.line
+        else
           -- There is no gap, the belt is full
           speed = 0
         end
@@ -255,15 +223,30 @@ function on_tick_player(player, controller)
       or controller.line.get_item_count(controller.item) == 0 then
         local output_lines = get_output_lines(controller.line, target, info.index)
         local output_line = nil
-        -- Pick a random line if there are multiple output lines
-        shuffle(output_lines)
-        for i = 1, #output_lines do
-          if output_lines[i] ~= controller.line
-          and output_lines[i].get_item_count(controller.item) > 0 then
-            output_line = output_lines[i]
-            break
+
+        -- Pick the splitter line if there are multiple output lines
+        if target.type == "splitter" then
+          for i = 1, #output_lines do
+            if output_lines[i] == splitter_output_line
+            and output_lines[i].get_item_count(controller.item) > 0 then
+              output_line = output_lines[i]
+              break
+            end
           end
         end
+
+        -- Pick a random line if there are multiple output lines
+        if not output_line then
+          shuffle(output_lines)
+          for i = 1, #output_lines do
+            if output_lines[i] ~= controller.line
+            and output_lines[i].get_item_count(controller.item) > 0 then
+              output_line = output_lines[i]
+              break
+            end
+          end
+        end
+
         if output_line then
           -- Reset progress, except inside a splitter
           if target.type ~= "splitter" or target ~= output_line.owner then
@@ -634,21 +617,16 @@ end
 function get_output_lines(line, belt, index)
   -- 1. Search inside the belt entity and the linked neighbor
   if belt.type == "underground-belt" and belt.belt_to_ground_type == "input" then
-    if index == 1 then
-      return {belt.get_transport_line(3)}
-    end
-    if index == 2 then
-      return {belt.get_transport_line(4)}
-    end
     local neighbor = belt.neighbours
     if not neighbor then
+      -- Dead end
       return {}
-    end
-    if index == 3 then
-      return {neighbor.get_transport_line(1)}
-    end
-    if index == 4 then
-      return {neighbor.get_transport_line(2)}
+    elseif index <= 2 then
+      -- Underground section
+      return {belt.get_transport_line(index+2)}
+    else
+      -- Underground exit
+      return {neighbor.get_transport_line(index-2)}
     end
   end
   if belt.type == "splitter" and index <= 4 then
@@ -1046,138 +1024,7 @@ function line_position(pos, direction, line_index)
   return result
 end
 
--- Return an output line and its index
-function get_output_line_and_index(line, belt, index)
-  -- 1. Search inside the belt entity and the linked neighbor
-  if belt.type == "underground-belt" and belt.belt_to_ground_type == "input" then
-    local neighbor = belt.neighbours
-    if not neighbor then
-      -- Dead end
-      return nil, nil
-    elseif index <= 2 then
-      -- Underground section
-      return belt.get_transport_line(index+2), index+2
-    else
-      -- Underground exit
-      return neighbor.get_transport_line(index-2), index-2
-    end
-  end
-  if belt.type == "linked-belt" and belt.linked_belt_type == "input" then
-    local neighbor = belt.linked_belt_neighbour
-    if neighbor then
-      return neighbor.get_transport_line(index), index
-    end
-  end
-
-  -- 2. Search the belt entity outputs
-  for _, output in pairs(belt.belt_neighbours.outputs) do
-    for i = 1, 2 do
-      local output_line = output.get_transport_line(i)
-      if line.line_equals(output_line) then
-        return output_line, i
-      end
-    end
-  end
-
-  -- 3. If the line does not match because the internal transport line changed,
-  -- use LuaTransportBelt.output_lines to find the new line
-  local output_line = line.output_lines[1]
-  if not output_line or output_line == line then
-    -- Dead end
-    return nil, nil
-  end
-  return output_line, get_line_index(output_line, output_line.owner)
-end
-
-function find_transport_gap(line, belt, index, checked)
-  if belt.type == "splitter" and index < 4 then
-    if checked[belt.unit_number.."-"..index] then
-      return nil
-    end
-    checked[belt.unit_number.."-"..index] = true
-
-    if index > 2
-      then index = index - 2
-    end
-    local output1 = belt.get_transport_line(index+4)
-    local output2 = belt.get_transport_line(index+6)
-
-    if #line + #output1 + #output2 < 6 then
-      -- Found a gap!
-      return {entity=belt, line=line, index=index}
-    end
-
-    if (belt.splitter_output_priority == "right" and index <= 2)
-    or (belt.splitter_output_priority == "left" and index > 2) then
-      -- Low priority, we need gaps in BOTH output lines
-      if find_transport_gap(output1, belt, index+4, checked)
-      and find_transport_gap(output2, belt, index+6, checked) then
-        return true
-      end
-    else
-      -- Find a gap in either output line
-      return find_transport_gap(output1, belt, index+4, checked)
-      or find_transport_gap(output2, belt, index+6, checked)
-    end
-  end
-
-  local old_belt, old_line, old_index
-
-  while true do
-    old_belt = belt
-    old_line = line
-    old_index = index
-
-    -- Read next line
-    line, index = get_output_line_and_index(old_line, old_belt, old_index)
-    if line then
-      belt = line.owner
-    else
-      return nil
-    end
-
-    if checked[belt.unit_number.."-"..index] then
-      return nil
-    end
-    checked[belt.unit_number.."-"..index] = true
-
-    if has_transport_gap(line, belt, index, old_belt.direction) then
-      -- Found a gap!
-      return {entity=belt, line=line, index=index, old_direction=old_belt.direction}
-    end
-
-    -- Mark the belt as full
-    if DEBUG then
-      rendering.draw_rectangle{
-        color = {r=0, g=0, b=0, a=1},
-        filled = false,
-        width = 3,
-        left_top = belt,
-        left_top_offset = {-0.2, -0.2},
-        right_bottom = belt,
-        right_bottom_offset = {0.2, 0.2},
-        surface = belt.surface,
-        time_to_live = 2,
-      }
-    end
-  end
-end
-
-function max_line_length(belt, index)
-  if belt.type == "underground-belt" and index > 2 then
-    -- Underground length is variable
-    local neighbor = belt.neighbours
-    if not neighbor then return 0 end
-    local distance = math.abs(belt.position.x - neighbor.position.x) + math.abs(belt.position.y - neighbor.position.y)
-    return distance * 4
-
-  -- TODO: Check for short curve on transport-belt
-
-  else
-    return TRANSPORT_LINE_LENGTH[belt.type]
-  end
-end
-
+--[[
 function get_same_direction_input_line(belt, line, index)
   -- 1. Search inside the belt entity and the linked neighbor
   if belt.type == "underground-belt" and belt.belt_to_ground_type == "output" then
@@ -1226,24 +1073,7 @@ function get_same_direction_input_line(belt, line, index)
     end
   end
 end
-
-function has_transport_gap(line, belt, index, old_direction)
-  -- Curved belt
-  if belt.type == "transport-belt"
-  and belt.direction ~= old_belt_direction
-  and #belt.belt_neighbours.inputs == 1 then
-    return #line < CURVE_LENGTH[old_direction][belt.direction][index]
-  end
-  -- Splitter
-  if belt.type == "splitter" and index < 4 then
-    if index > 2
-      then index = index - 2
-    end
-    return #line + #belt.get_transport_line(index+4) + #belt.get_transport_line(index+6) < 6
-  end
-  return #line < max_line_length(belt, index)
-end
-
+--]]
 
 script.on_init(on_init)
 script.on_configuration_changed(on_configuration_changed)
