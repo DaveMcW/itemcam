@@ -230,9 +230,42 @@ local function get_output_conveyor(conveyor)
   return new_conveyor(owner, output_line, get_line_index(owner, output_line))
 end
 
+--- Test if input is side merging to output
 local function get_side_merge(input, output)
-  -- TODO: Implement
-  return false
+  -- Straight line (same direction)
+  if input.belt.direction == output.belt.direction then
+    return nil
+  end
+
+  -- Underground inputs will never side merge
+  if input.index <= 2
+  and (input.belt.type == "underground-belt" or input.belt.type == "linked-belt") then
+    return nil
+  end
+
+  -- Impossible to side merge onto these outputs
+  if output.belt.type == "splitter"
+  or output.belt.type == "loader"
+  or output.belt.type == "loader-1x1" then
+    return nil
+  end
+
+  -- Straight line (opposite direction)
+  if DX[input.belt.direction] == DX[output.belt.direction]
+  or DY[input.belt.direction] == DY[output.belt.direction] then
+    return nil
+  end
+
+  -- Inner lane merge
+  if output.belt.type == "transport-belt"
+  and CURVE_TYPE[input.belt.direction][output.belt.direction][input.index] == "inner" then
+    -- TODO: return details
+    return true
+  end
+
+  -- Outer lane merge
+  -- TODO: return details
+  return true
 end
 
 --- Is there a belt gap on this entity?
@@ -405,6 +438,7 @@ local function edge_has_gap(graph, edge, limit)
   end
 
   -- Recursively check the downstream edges
+  -- TODO: Weight output equally
   local result = nil
   for _, output in pairs(edge.outputs) do
     if edge_has_gap(graph, output, math.ceil(limit / #edge.outputs)) then
