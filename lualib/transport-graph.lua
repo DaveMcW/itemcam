@@ -2,17 +2,21 @@ local util = require "util"
 
 
 --[[
-  if we reach an already-pruned splitter, rebuild the map.
+  Ideas not yet implemented:
 
   grabbers in a circular branch are unpruneable
 
+  2:1 splitter inputs should move at half speed
+
   https://en.wikipedia.org/wiki/Tarjan%27s_strongly_connected_components_algorithm
 
-  breadth-first splitter search
+  if we reach an already-pruned splitter, rebuild the map.
 
 --]]
 
 local DEBUG = true
+local INNER_MERGE_POSITION = 127 / 256
+local OUTER_MERGE_POSITION = 255 / 256
 local DX = {
   [defines.direction.north] = 0,
   [defines.direction.east] = 1,
@@ -126,9 +130,9 @@ end
 --- An "edge" is a simple section of the graph between two splitters/merges
 local function add_edge(graph, conveyor)
   local edge = {
-    head = conveyor, -- splitter(5-8) or merging belt
+    head = conveyor, -- splitter line 5-8 or merge output
     middle = conveyor,
-    tail = nil, -- splitter(1-4) or merging belt
+    tail = nil, -- splitter line 1-4 or merge input
     sinks = {},
     outputs = {},
   }
@@ -231,6 +235,7 @@ local function get_output_conveyor(conveyor)
 end
 
 --- Test if input is side merging to output
+---@return number|nil position merge position, or nil if no merge
 local function get_side_merge(input, output)
   -- Straight line (same direction)
   if input.belt.direction == output.belt.direction then
@@ -256,16 +261,22 @@ local function get_side_merge(input, output)
     return nil
   end
 
-  -- Inner lane merge
+  -- Find merge position by comparing it to an inner/outer curve
+  local position = OUTER_MERGE_POSITION
   if output.belt.type == "transport-belt"
   and CURVE_TYPE[input.belt.direction][output.belt.direction][input.index] == "inner" then
-    -- TODO: return details
-    return true
+    position = INNER_MERGE_POSITION
   end
 
-  -- Outer lane merge
-  -- TODO: return details
-  return true
+  -- Find the second input that we are merging with
+  for _, belt in pairs(output.belt.belt_neighbours.inputs) do
+    if belt.direction == output.belt.direction then
+      return position
+    end
+  end
+
+  -- Nothing to merge with, so treat it like a curve
+  return nil
 end
 
 --- Is there a belt gap on this entity?
@@ -303,14 +314,13 @@ end
 --- Follow the edge of the graph
 ---@return boolean true if a gap is found or the limit is reached
 local function expand_edge(graph, edge, limit)
-  local count = 0
   while edge.middle do
 
     -- Limit search rate
-    count = count + 1
-    if count > limit then
+    if graph.count >= limit then
       return true
     end
+    graph.count = graph.count + 1
 
     local conveyor = get_output_conveyor(edge.middle)
 
@@ -372,7 +382,10 @@ local function expand_edge(graph, edge, limit)
       if side_merge then
         edge.tail = edge.middle
         edge.middle = nil
-        table.insert(edge.outputs, add_edge(graph, conveyor))
+        local new_edge = add_edge(graph, conveyor)
+        add_sink(new_edge, conveyor)
+        new_edge.side_merge = side_merge
+        table.insert(edge.outputs, new_edge)
       else
         -- Expand the current edge
         add_sink(edge, conveyor)
@@ -437,15 +450,53 @@ local function edge_has_gap(graph, edge, limit)
     return edge.head
   end
 
+  if edge.head.belt.unit_number == 14860 then
+
+  end
+
   -- Recursively check the downstream edges
-  -- TODO: Weight output equally
-  local result = nil
-  for _, output in pairs(edge.outputs) do
-    if edge_has_gap(graph, output, math.ceil(limit / #edge.outputs)) then
-      result = output.head
+
+  if #edge.outputs == 0 then
+    return nil
+  end
+
+  if #edge.outputs == 1 then
+    if edge.outputs[1].side_merge
+    and edge.outputs[1].head.line.valid
+    and not edge.outputs[1].head.line.can_insert_at(edge.outputs[1].side_merge) then
+      -- Side merge is blocked by a full straight belt
+      return nil
+    else
+      return edge_has_gap(graph, edge.outputs[1], limit)
     end
   end
-  return result
+
+  -- Splitter output
+  if edge == graph.current_edge then
+    -- Ideally we would spend 50% of the limit searching each path.
+    -- But if one path terminates early, we want to spend 100% of the limit
+    -- searching the other path.
+    -- So 75% on the first path is a compromise.
+    local result1 = edge_has_gap(graph, edge.outputs[1], math.ceil((limit - graph.count) * 0.75))
+    local result2 = edge_has_gap(graph, edge.outputs[2], limit)
+    if result1 and result2 then
+      -- Avoid favoring one side of a splitter
+      return edge.outputs[math.random(1,2)].head
+    elseif result1 then
+      return edge.outputs[1].head
+    elseif result2 then
+      return edge.outputs[2].head
+    end
+  else
+    -- Just find the first gap
+    for _, output in pairs(edge.outputs) do
+      if edge_has_gap(graph, output, limit) then
+        return output.head
+      end
+    end
+  end
+
+  return nil
 end
 
 
@@ -490,6 +541,7 @@ end
 --- Is there a belt gap somewhere downstream?
 ---@return table conveyor The matching output line of the first splitter
 function M.has_gap(graph)
+  graph.count = 0
   return edge_has_gap(graph, graph.current_edge, global.BELT_SEARCH_RATE)
 end
 
