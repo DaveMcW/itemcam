@@ -15,8 +15,6 @@ local util = require "util"
 --]]
 
 local DEBUG = true
-local INNER_MERGE_POSITION = 127 / 256
-local OUTER_MERGE_POSITION = 255 / 256
 local DX = {
   [defines.direction.north] = 0,
   [defines.direction.east] = 1,
@@ -262,13 +260,14 @@ local function get_side_merge(input, output)
   end
 
   -- Find merge position by comparing it to an inner/outer curve
-  local position = OUTER_MERGE_POSITION
+  local position = 0.99609375
   if output.belt.type == "transport-belt"
   and CURVE_TYPE[input.belt.direction][output.belt.direction][input.index] == "inner" then
-    position = INNER_MERGE_POSITION
+    position = 0.49609375
+    output.capacity = 2
   end
 
-  -- Find the second input that we are merging with
+  -- Find the second input belt that we are merging with
   for _, belt in pairs(output.belt.belt_neighbours.inputs) do
     if belt.direction == output.belt.direction then
       return position
@@ -305,8 +304,22 @@ local function conveyor_has_gap(conveyor)
     return true
   end
 
-  -- TODO: Curved belt has fractional capacity, we need a more powerful test
+  -- Curves do not have an integer capacity, so we need a more precise test
 
+  if conveyer.curve_type == "inner" then
+    -- Test 2 possible item positions
+    return conveyor.line.can_insert_at(0.1015625)
+      or conveyor.line.can_insert_at(0.390625)
+  end
+
+  if conveyer.curve_type == "outer" then
+    -- Test 5 possible item positions
+    return conveyor.line.can_insert_at(0.57421875)
+      or conveyor.line.can_insert_at(0.34375)
+      or conveyor.line.can_insert_at(0.8046875)
+      or conveyor.line.can_insert_at(0.11328125)
+      or conveyor.line.can_insert_at(1.03515625)
+  end
 
   return false
 end
