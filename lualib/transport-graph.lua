@@ -306,13 +306,13 @@ local function conveyor_has_gap(conveyor)
 
   -- Curves do not have an integer capacity, so we need a more precise test
 
-  if conveyer.curve_type == "inner" then
+  if conveyor.curve_type == "inner" then
     -- Test 2 possible item positions
     return conveyor.line.can_insert_at(0.1015625)
       or conveyor.line.can_insert_at(0.390625)
   end
 
-  if conveyer.curve_type == "outer" then
+  if conveyor.curve_type == "outer" then
     -- Test 5 possible item positions
     return conveyor.line.can_insert_at(0.57421875)
       or conveyor.line.can_insert_at(0.34375)
