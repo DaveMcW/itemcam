@@ -215,13 +215,7 @@ local function get_output_conveyor(conveyor)
     end
   end
 
-  -- 3. Dead-end splitters are buggy, don't try to follow them.
-  -- https://forums.factorio.com/101435
-  if belt.type == "splitter" then
-    return nil
-  end
-
-  -- 4. If the line does not match because the internal transport line changed,
+  -- 3. If the line does not match because the internal transport line changed,
   -- use LuaTransportBelt.output_lines to find the new line
   local output_line = line.output_lines[1]
   if not output_line or output_line == line then
@@ -304,16 +298,18 @@ local function conveyor_has_gap(conveyor)
     return true
   end
 
-  -- Curves do not have an integer capacity, so we need a more precise test
+  -- There could still be gaps if the belt is at max capacity,
+  -- because curve capacity is rounded down,
+  -- and the belt at the end of the line rounds item count up.
 
   if conveyor.curve_type == "inner" then
-    -- Test 2 possible item positions
+    -- Test 2 possible gap positions
     return conveyor.line.can_insert_at(0.1015625)
       or conveyor.line.can_insert_at(0.390625)
   end
 
   if conveyor.curve_type == "outer" then
-    -- Test 5 possible item positions
+    -- Test 5 possible gap positions
     return conveyor.line.can_insert_at(0.57421875)
       or conveyor.line.can_insert_at(0.34375)
       or conveyor.line.can_insert_at(0.8046875)
@@ -321,7 +317,22 @@ local function conveyor_has_gap(conveyor)
       or conveyor.line.can_insert_at(1.03515625)
   end
 
-  return false
+  if conveyor.capacity == 4 then
+    -- Test 4 possible gap positions
+      return conveyor.line.can_insert_at(0.375)
+      or conveyor.line.can_insert_at(0.625)
+      or conveyor.line.can_insert_at(0.125)
+      or conveyor.line.can_insert_at(0.875)
+  end
+
+  -- Splitter has extra gaps built in, ignore them
+  if conveyor.belt.type == "splitter" then
+    return false
+  end
+
+  -- Test 2 possible gap positions
+  return conveyor.line.can_insert_at(0.125)
+    or conveyor.line.can_insert_at(0.375)
 end
 
 --- Follow the edge of the graph
@@ -345,7 +356,7 @@ local function expand_edge(graph, edge, limit)
     end
 
     -- Splitter creates 2 new edges
-    if conveyor.belt.type == "splitter" then
+    if conveyor.belt.type == "splitter" and conveyor.index <= 4 then
       add_sink(edge, conveyor)
       edge.tail = conveyor
       edge.middle = nil
@@ -411,7 +422,7 @@ local function expand_edge(graph, edge, limit)
             color = {r=0, g=1, b=0, a=1},
             radius = 0.4,
             width = 2,
-            time_to_live = 60,
+            time_to_live = 600,
           }
         end
 
