@@ -111,7 +111,7 @@ function on_player_selected_area(event)
     local item = entity_contains_item(entity)
     if item then
       -- Enter zoom mode
-      start_item_zoom(player, item, entity)
+      start_item_zoom(player, item, entity, center)
       return
     end
   end
@@ -192,7 +192,7 @@ function on_tick_player(player, controller)
 
     -- Move the item down the transport line
     if HAS_TRANSPORT_LINE[target.type] then
-      info = get_line_info(target, controller.line, controller.index)
+      info = get_line_info(target, controller.index)
       local speed = target.prototype.belt_speed
 
       -- Stop at the end of the transport line
@@ -272,7 +272,7 @@ function on_tick_player(player, controller)
     end
 
   -- Did the target drop the item somewhere?
-  elseif entity_item_count(target, controller.item) < controller.count
+  elseif dropper_item_count(target, controller.item) < controller.count
   or target.type == "mining-drill" then
     if target.type == "inserter" or target.type == "mining-drill" then
       if target.drop_target then
@@ -281,7 +281,7 @@ function on_tick_player(player, controller)
         if (target.type == "inserter"
         or entity_contains_item(target.drop_target, controller.item)) then
           target = target.drop_target
-          find_transport_line(target, controller)
+          find_transport_line(target, controller, target.drop_position)
           if IS_CRAFTING_MACHINE[target.type] then
             controller.item = nil
           end
@@ -396,7 +396,7 @@ function on_tick_player(player, controller)
 
   elseif HAS_TRANSPORT_LINE[target.type] then
     if not info then
-      info = get_line_info(target, controller.line, controller.index)
+      info = get_line_info(target, controller.index)
     end
     local progress = belt_progress
     if target.type ~= "splitter" then
@@ -495,7 +495,7 @@ function on_tick_player(player, controller)
   -- Save data for next tick
   controller.entity = target
   controller.entity_type = target.type
-  controller.count = entity_item_count(target, controller.item)
+  controller.count = dropper_item_count(target, controller.item)
   controller.belt_progress = belt_progress
   if target.type ~= "inserter" then
     controller.pickup_position = nil
@@ -581,10 +581,11 @@ function find_grabbers(entity)
   return grabbers
 end
 
-function find_transport_line(entity, controller)
+function find_transport_line(entity, controller, position)
+  if not HAS_TRANSPORT_LINE[entity.type] then return end
+
   -- TODO: Use inserter drop position to eliminate some lines
 
-  if not HAS_TRANSPORT_LINE[entity.type] then return end
 
   -- Pick a random line
   local indexes = {}
@@ -602,7 +603,7 @@ function find_transport_line(entity, controller)
       controller.gaps = {}
       controller.graph = TransportGraph.new(controller.item, entity, line, index)
 
-      local info = get_line_info(entity, line, index)
+      local info = get_line_info(entity, index)
       if entity.type == "transport-belt" then
         controller.belt_progress = info.length / 2
       elseif entity.type == "splitter" and index <= 4 then
@@ -700,7 +701,7 @@ function tile_box(box)
   return result
 end
 
-function start_item_zoom(player, item, entity)
+function start_item_zoom(player, item, entity, position)
   player.set_shortcut_toggled("item-zoom", true)
   player.clear_cursor()
   if player.character then
@@ -715,9 +716,9 @@ function start_item_zoom(player, item, entity)
     controller_type = player.controller_type,
     character = player.character,
     character_name = player.character and player.character.name,
-    count = entity_item_count(entity, item),
+    count = dropper_item_count(entity, item),
   }
-  find_transport_line(entity, controller)
+  find_transport_line(entity, controller, position)
   global.zoom_controllers[player.index] = controller
 
   -- Swap to god controller
@@ -863,11 +864,12 @@ function recipe_contains_item(recipe, item)
   end
 end
 
-function entity_item_count(entity, item)
+function dropper_item_count(entity, item)
   if not item then
     return 0
   end
   if HAS_TRANSPORT_LINE[entity] then
+    -- Not an item dropper
     return 0
   end
   if entity.type == "inserter" and entity.held_stack.valid_for_read then
@@ -926,7 +928,7 @@ function get_belt_info(belt)
   }
 end
 
-function get_line_info(belt, line, index)
+function get_line_info(belt, index)
   local belt_info = get_belt_info(belt)
   local start_pos = belt.position
   local end_pos = belt.position
