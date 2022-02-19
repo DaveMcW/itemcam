@@ -1,7 +1,7 @@
 data:extend{
   {
     type = "int-setting",
-    name = "item-zoom-inserter-search-distance",
+    name = "itemzoom-inserter-search-distance",
     setting_type = "runtime-global",
     default_value = 4,
     minimum_value = 1,
@@ -9,7 +9,7 @@ data:extend{
   },
   {
     type = "int-setting",
-    name = "item-zoom-robot-search-distance",
+    name = "itemzoom-robot-search-distance",
     setting_type = "runtime-global",
     default_value = 4,
     minimum_value = 1,
@@ -17,7 +17,7 @@ data:extend{
   },
   {
     type = "int-setting",
-    name = "item-zoom-belt-search-rate",
+    name = "itemzoom-belt-search-rate",
     setting_type = "runtime-global",
     default_value = 20,
     minimum_value = 1,

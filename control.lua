@@ -58,9 +58,9 @@ end
 
 function on_runtime_mod_setting_changed()
   local my_settings = settings
-  global.INSERTER_SEARCH_DISTANCE = my_settings.global["item-zoom-inserter-search-distance"].value
-  global.ROBOT_SEARCH_DISTANCE = my_settings.global["item-zoom-robot-search-distance"].value
-  global.BELT_SEARCH_RATE = my_settings.global["item-zoom-belt-search-rate"].value
+  global.INSERTER_SEARCH_DISTANCE = my_settings.global["itemzoom-inserter-search-distance"].value
+  global.ROBOT_SEARCH_DISTANCE = my_settings.global["itemzoom-robot-search-distance"].value
+  global.BELT_SEARCH_RATE = my_settings.global["itemzoom-belt-search-rate"].value
 end
 
 function on_tick()
@@ -77,24 +77,24 @@ function on_tick()
 end
 
 function on_lua_shortcut(event)
-  if event.prototype_name ~= "item-zoom" then return end
+  if event.prototype_name ~= "itemzoom" then return end
 
   -- Player clicked the mod button
   local player = game.get_player(event.player_index)
 
-  if player.is_shortcut_toggled("item-zoom") then
+  if player.is_shortcut_toggled("itemzoom") then
     -- Exit zoom mode
     exit_item_zoom(player)
 
   elseif player.cursor_stack then
     -- Give the player a selection tool
     player.clear_cursor()
-    player.cursor_stack.set_stack("item-zoom")
+    player.cursor_stack.set_stack("itemzoom")
   end
 end
 
 function on_player_selected_area(event)
-  if event.item ~= "item-zoom" then return end
+  if event.item ~= "itemzoom" then return end
 
   -- Player selected an entity to zoom in
   local player = game.get_player(event.player_index)
@@ -505,7 +505,7 @@ function on_tick_player(player, controller)
   --     surface = player.surface,
   --     show_entity_info = true,
   --     resolution = {600, 600},
-  --     path = "item-zoom/screenshot-"..global.screenshot_count..".png"
+  --     path = "itemzoom/screenshot-"..global.screenshot_count..".png"
   --   }
   --   for i = 1, 100000000 do end
   --   global.screenshot_count = global.screenshot_count + 1
@@ -698,7 +698,7 @@ function tile_box(box)
 end
 
 function start_item_zoom(player, item, entity, position)
-  player.set_shortcut_toggled("item-zoom", true)
+  player.set_shortcut_toggled("itemzoom", true)
   player.clear_cursor()
   if player.character then
     player.character.walking_state = {walking = false}
@@ -727,7 +727,7 @@ function start_item_zoom(player, item, entity, position)
 end
 
 function exit_item_zoom(player)
-  player.set_shortcut_toggled("item-zoom", false)
+  player.set_shortcut_toggled("itemzoom", false)
 
   local controller = global.zoom_controllers[player.index]
   if not controller then return end

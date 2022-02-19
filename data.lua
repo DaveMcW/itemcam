@@ -1,7 +1,7 @@
 local selection_tool = {
-  name = "item-zoom",
+  name = "itemzoom",
   type = "selection-tool",
-  icon = "__item-zoom__/graphics/tool.png",
+  icon = "__itemzoom__/graphics/tool.png",
   icon_size = 64,
   icon_mipmaps = 2,
   flags = {"hidden", "not-stackable", "only-in-cursor"},
@@ -16,12 +16,12 @@ local selection_tool = {
 data:extend{selection_tool}
 
 local shortcut = {
-  name = "item-zoom",
+  name = "itemzoom",
   type = "shortcut",
   action = "lua",
   toggleable = true,
   icon = {
-    filename = "__item-zoom__/graphics/shortcut-x32.png",
+    filename = "__itemzoom__/graphics/shortcut-x32.png",
     priority = "extra-high-no-scale",
     size = 32,
     scale = 0.5,
@@ -29,7 +29,7 @@ local shortcut = {
     flags = {"gui-icon"}
   },
   disabled_icon = {
-    filename = "__item-zoom__/graphics/shortcut-x32-white.png",
+    filename = "__itemzoom__/graphics/shortcut-x32-white.png",
     priority = "extra-high-no-scale",
     size = 32,
     scale = 0.5,
