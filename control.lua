@@ -221,9 +221,8 @@ function on_tick_player(player, controller)
       -- Did the item move to a different transport line?
       if (controller.belt_progress >= info.length and (target.type ~= "splitter" or controller.index <= 4 or controller.belt_progress >= 1))
       or controller.line.get_item_count(controller.item) == 0 then
-        local output_lines = get_output_lines(controller.line, target, controller.index)
+        local output_lines = get_output_lines(target, controller.line, controller.index)
         local output_line = nil
-        local output_index = nil
 
         -- Pick the splitter line if there are multiple output lines
         if target.type == "splitter" then
@@ -231,7 +230,6 @@ function on_tick_player(player, controller)
             if output_lines[i] == splitter_output_line
             and output_lines[i].get_item_count(controller.item) > 0 then
               output_line = output_lines[i]
-              output_index = i
               break
             end
           end
@@ -244,7 +242,6 @@ function on_tick_player(player, controller)
             if output_lines[i] ~= controller.line
             and output_lines[i].get_item_count(controller.item) > 0 then
               output_line = output_lines[i]
-              output_index = i
               break
             end
           end
@@ -263,9 +260,9 @@ function on_tick_player(player, controller)
           -- Move to new transport line
           target = owner
           controller.line = output_line
-          controller.index = output_index
+          controller.index = get_line_index(target, output_line)
           controller.first_line = nil
-          TransportGraph.move_to(controller.graph, owner, output_line, output_index)
+          TransportGraph.move_to(controller.graph, target, output_line, controller.index)
           info = nil
         end
       end
@@ -584,6 +581,7 @@ end
 function find_transport_line(entity, controller, position)
   if not HAS_TRANSPORT_LINE[entity.type] then return end
 
+  game.print(entity.type)
   -- TODO: Use inserter drop position to eliminate some lines
 
 
@@ -622,7 +620,7 @@ function find_transport_line(entity, controller, position)
   end
 end
 
-function get_output_lines(line, belt, index)
+function get_output_lines(belt, line, index)
   -- Splitter always breaks transport line
   if belt.type == "splitter" and index <= 4 then
     return line.output_lines
@@ -1025,6 +1023,16 @@ function line_position(pos, direction, line_index)
   result.y = result.y + DX[direction] * sign * 0.234375
 
   return result
+end
+
+--- Calculate transport line index from LuaEntity and LuaTransportLine
+function get_line_index(belt, line)
+  for i = 1, belt.get_max_transport_line_index() do
+    if line == belt.get_transport_line(i) then
+      return i
+    end
+  end
+  return 0
 end
 
 
