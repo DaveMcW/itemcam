@@ -22,19 +22,19 @@ local shortcut = {
   toggleable = true,
   icon = {
     filename = "__item-zoom__/graphics/shortcut-x32.png",
-    flags = {"gui-icon"},
-    mipmap_count = 2,
     priority = "extra-high-no-scale",
+    size = 32,
     scale = 0.5,
-    size = 32
+    mipmap_count = 2,
+    flags = {"gui-icon"}
   },
-  small_icon = {
-    filename = "__item-zoom__/graphics/shortcut-x24.png",
-    flags = {"gui-icon"},
-    mipmap_count = 2,
+  disabled_icon = {
+    filename = "__item-zoom__/graphics/shortcut-x32-white.png",
     priority = "extra-high-no-scale",
+    size = 32,
     scale = 0.5,
-    size = 24
+    mipmap_count = 2,
+    flags = {"gui-icon"}
   },
 }
 data:extend{shortcut}

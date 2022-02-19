@@ -581,9 +581,7 @@ end
 function find_transport_line(entity, controller, position)
   if not HAS_TRANSPORT_LINE[entity.type] then return end
 
-  game.print(entity.type)
   -- TODO: Use inserter drop position to eliminate some lines
-
 
   -- Pick a random line
   local indexes = {}
