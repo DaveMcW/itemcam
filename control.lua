@@ -192,7 +192,7 @@ function on_tick_player(player, controller)
 
     -- Move the item down the transport line
     if HAS_TRANSPORT_LINE[target.type] then
-      info = get_line_info(controller.line, target)
+      info = get_line_info(target, controller.line, controller.index)
       local speed = target.prototype.belt_speed
 
       -- Stop at the end of the transport line
@@ -219,10 +219,11 @@ function on_tick_player(player, controller)
       controller.belt_progress = controller.belt_progress + speed
 
       -- Did the item move to a different transport line?
-      if (controller.belt_progress >= info.length and (target.type ~= "splitter" or info.index <= 4 or controller.belt_progress >= 1))
+      if (controller.belt_progress >= info.length and (target.type ~= "splitter" or controller.index <= 4 or controller.belt_progress >= 1))
       or controller.line.get_item_count(controller.item) == 0 then
-        local output_lines = get_output_lines(controller.line, target, info.index)
+        local output_lines = get_output_lines(controller.line, target, controller.index)
         local output_line = nil
+        local output_index = nil
 
         -- Pick the splitter line if there are multiple output lines
         if target.type == "splitter" then
@@ -230,6 +231,7 @@ function on_tick_player(player, controller)
             if output_lines[i] == splitter_output_line
             and output_lines[i].get_item_count(controller.item) > 0 then
               output_line = output_lines[i]
+              output_index = i
               break
             end
           end
@@ -242,6 +244,7 @@ function on_tick_player(player, controller)
             if output_lines[i] ~= controller.line
             and output_lines[i].get_item_count(controller.item) > 0 then
               output_line = output_lines[i]
+              output_index = i
               break
             end
           end
@@ -249,7 +252,8 @@ function on_tick_player(player, controller)
 
         if output_line then
           -- Reset progress, except inside a splitter
-          if target.type ~= "splitter" or target ~= output_line.owner then
+          local owner = output_line.owner
+          if target.type ~= "splitter" or target ~= owner then
             controller.belt_progress = controller.belt_progress - info.length
             if controller.belt_progress > target.prototype.belt_speed
             or controller.belt_progress < 0 then
@@ -257,10 +261,11 @@ function on_tick_player(player, controller)
             end
           end
           -- Move to new transport line
+          target = owner
           controller.line = output_line
+          controller.index = output_index
           controller.first_line = nil
-          target = output_line.owner
-          TransportGraph.move_to(controller.graph, target, output_line, info.index)
+          TransportGraph.move_to(controller.graph, owner, output_line, output_index)
           info = nil
         end
       end
@@ -391,7 +396,7 @@ function on_tick_player(player, controller)
 
   elseif HAS_TRANSPORT_LINE[target.type] then
     if not info then
-      info = get_line_info(controller.line, target)
+      info = get_line_info(target, controller.line, controller.index)
     end
     local progress = belt_progress
     if target.type ~= "splitter" then
@@ -437,7 +442,8 @@ function on_tick_player(player, controller)
     }
   end
 
-  -- Don't trust inserters pointing at a train
+  -- Recalculate inserters if the target changed
+  -- Never trust inserters pointing at a train
   if controller.entity ~= target
   or target.type == "cargo-wagon"
   or target.type == "artillery-wagon" then
@@ -496,17 +502,17 @@ function on_tick_player(player, controller)
   end
 
   -- Take screenshots
-  if global.screenshot_count < 100 then
-    -- game.take_screenshot {
-    --   player = player,
-    --   surface = player.surface,
-    --   show_entity_info = true,
-    --   resolution = {600, 600},
-    --   path = "item-zoom/screenshot-"..global.screenshot_count..".png"
-    -- }
-    -- for i = 1, 100000000 do end
-    -- global.screenshot_count = global.screenshot_count + 1
-  end
+  -- if global.screenshot_count < 100 then
+  --   game.take_screenshot {
+  --     player = player,
+  --     surface = player.surface,
+  --     show_entity_info = true,
+  --     resolution = {600, 600},
+  --     path = "item-zoom/screenshot-"..global.screenshot_count..".png"
+  --   }
+  --   for i = 1, 100000000 do end
+  --   global.screenshot_count = global.screenshot_count + 1
+  -- end
 end
 
 -- Find an inserter on the first tick of its pickup animation
@@ -587,18 +593,19 @@ function find_transport_line(entity, controller)
   end
   shuffle(indexes)
 
-  for _, i in pairs(indexes) do
-    local line = entity.get_transport_line(i)
+  for _, index in pairs(indexes) do
+    local line = entity.get_transport_line(index)
     if line.get_item_count(controller.item) > 0 then
       controller.line = line
+      controller.index = index
       controller.first_line = true
       controller.gaps = {}
-      controller.graph = TransportGraph.new(controller.item, entity, line, i)
+      controller.graph = TransportGraph.new(controller.item, entity, line, index)
 
-      local info = get_line_info(line, entity)
+      local info = get_line_info(entity, line, index)
       if entity.type == "transport-belt" then
         controller.belt_progress = info.length / 2
-      elseif entity.type == "splitter" and info.index <= 4 then
+      elseif entity.type == "splitter" and index <= 4 then
         controller.belt_progress = 0.5
       elseif entity.type == "loader" then
         -- TODO: Make more precise
@@ -615,7 +622,12 @@ function find_transport_line(entity, controller)
 end
 
 function get_output_lines(line, belt, index)
-  -- 1. Search inside the belt entity and the linked neighbor
+  -- Splitter always breaks transport line
+  if belt.type == "splitter" and index <= 4 then
+    return line.output_lines
+  end
+
+  -- Search inside the belt entity and the linked neighbor
   if belt.type == "underground-belt" and belt.belt_to_ground_type == "input" then
     local neighbor = belt.neighbours
     if not neighbor then
@@ -629,10 +641,6 @@ function get_output_lines(line, belt, index)
       return {neighbor.get_transport_line(index-2)}
     end
   end
-  if belt.type == "splitter" and index <= 4 then
-    -- Splitter always breaks transport line
-    return line.output_lines
-  end
   if belt.type == "linked-belt" and belt.linked_belt_type == "input" then
     local neighbor = belt.linked_belt_neighbour
     if neighbor then
@@ -640,9 +648,13 @@ function get_output_lines(line, belt, index)
     end
   end
 
-  -- 2. Search the belt entity outputs
+  -- Search the belt entity outputs
   for _, output in pairs(belt.belt_neighbours.outputs) do
-    for i = 1, output.get_max_transport_line_index() do
+    local max_index = 2
+    if output.type == "splitter" then
+      max_index = 4
+    end
+    for i = 1, max_index do
       local output_line = output.get_transport_line(i)
       if line.line_equals(output_line) then
         return {output_line}
@@ -650,7 +662,7 @@ function get_output_lines(line, belt, index)
     end
   end
 
-  -- 3. If the line does not match because the internal transport line changed,
+  -- If the line does not match because the internal transport line changed,
   -- use LuaTransportBelt.output_lines to find the new line
   return line.output_lines
 end
@@ -746,14 +758,14 @@ function exit_item_zoom(player)
   }
 end
 
--- Calculate a distance value using Pythagorean theorem.
--- We can skip the square root, since it is only used to compare two points.
+--- Calculate a distance value using Pythagorean theorem.
+--- We can skip the square root, since it is only used to compare two points.
 function cmp_dist(a, b)
   return (a.x-b.x)*(a.x-b.x) + (a.y-b.y)*(a.y-b.y)
 end
 
--- Return item paramenter if it exists in the entity.
--- Return random item if item parameter is nil.
+--- Return item parameter if it exists in the entity.
+--- Return random item if item parameter is nil.
 function entity_contains_item(entity, item)
 
   -- Check output inventory
@@ -828,8 +840,8 @@ function entity_contains_item(entity, item)
 
 end
 
--- Return item paramenter if it exists in the inventory.
--- Return random item if item parameter is nil.
+--- Return item parameter if it exists in the inventory.
+--- Return random item if item parameter is nil.
 function inventory_contains_item(inventory, item)
   if not inventory then return end
   if inventory.get_item_count() == 0 then return end
@@ -839,8 +851,8 @@ function inventory_contains_item(inventory, item)
   return found
 end
 
--- Return item paramenter if it exists in the recipe products.
--- Return random product if item parameter is nil.
+--- Return item parameter if it exists in the recipe products.
+--- Return random product if item parameter is nil.
 function recipe_contains_item(recipe, item)
   if not recipe.products then return end
   for _, product in pairs(recipe.products) do
@@ -914,16 +926,15 @@ function get_belt_info(belt)
   }
 end
 
-function get_line_info(line, belt)
+function get_line_info(belt, line, index)
   local belt_info = get_belt_info(belt)
   local start_pos = belt.position
   local end_pos = belt.position
   local length = 1
-  local line_index = get_line_index(line, belt)
 
   if belt.type == "transport-belt" then
-    start_pos = line_position(belt_info.start_pos, belt_info.input_direction, line_index)
-    end_pos = line_position(belt_info.end_pos, belt.direction, line_index)
+    start_pos = line_position(belt_info.start_pos, belt_info.input_direction, index)
+    end_pos = line_position(belt_info.end_pos, belt.direction, index)
     -- Adjust length of curved belts
     -- https://forums.factorio.com/viewtopic.php?p=554468#p554468
     local distance = math.abs(start_pos.x - end_pos.x) + math.abs(start_pos.y - end_pos.y)
@@ -934,16 +945,16 @@ function get_line_info(line, belt)
     end
 
   elseif belt.type == "underground-belt" and belt.belt_to_ground_type == "input"
-  and line_index <= 2 then
+  and index <= 2 then
     length = 0.5
-    start_pos = line_position(belt_info.start_pos, belt.direction, line_index)
+    start_pos = line_position(belt_info.start_pos, belt.direction, index)
     end_pos.x = start_pos.x + DX[belt.direction] * length
     end_pos.y = start_pos.y + DY[belt.direction] * length
 
   elseif belt.type == "underground-belt" and belt.belt_to_ground_type == "input"
-  and line_index > 2 then
+  and index > 2 then
     length = 0.5
-    start_pos = line_position(belt.position, belt.direction, line_index)
+    start_pos = line_position(belt.position, belt.direction, index)
     local neighbor = belt.neighbours
     if neighbor then
       -- Extend length to meet the paired underground belt
@@ -954,12 +965,12 @@ function get_line_info(line, belt)
 
   elseif belt.type == "underground-belt" and belt.belt_to_ground_type == "output" then
     length = 0.5
-    start_pos = line_position(belt.position, belt.direction, line_index)
+    start_pos = line_position(belt.position, belt.direction, index)
     end_pos.x = start_pos.x + DX[belt.direction] * length
     end_pos.y = start_pos.y + DY[belt.direction] * length
 
   elseif belt.type == "splitter" then
-    if line_index <= 4 then
+    if index <= 4 then
     -- Input buffer takes up most of the belt
     -- https://forums.factorio.com/viewtopic.php?p=554468#p554468
       length = 179 / 256
@@ -968,10 +979,10 @@ function get_line_info(line, belt)
     end
     -- Pick the top or bottom side of the splitter
     local position = belt_info.start_pos
-    position.x = position.x - DY[belt.direction] * SPLITTER_SIDE[line_index]
-    position.y = position.y + DX[belt.direction] * SPLITTER_SIDE[line_index]
+    position.x = position.x - DY[belt.direction] * SPLITTER_SIDE[index]
+    position.y = position.y + DX[belt.direction] * SPLITTER_SIDE[index]
     -- Pick the correct line on the belt
-    start_pos = line_position(position, belt.direction, line_index)
+    start_pos = line_position(position, belt.direction, index)
     -- The dividing line between the input and output is variable,
     -- so use one start_pos and end_pos for the entire splitter
     end_pos.x = start_pos.x + DX[belt.direction]
@@ -979,13 +990,13 @@ function get_line_info(line, belt)
 
   elseif belt.type == "linked-belt" and belt.linked_belt_type == "input" then
     length = 0.5
-    start_pos = line_position(belt_info.start_pos, belt.direction, line_index)
+    start_pos = line_position(belt_info.start_pos, belt.direction, index)
     end_pos.x = start_pos.x + DX[belt.direction] * length
     end_pos.y = start_pos.y + DY[belt.direction] * length
 
   elseif belt.type == "linked-belt" and belt.linked_belt_type == "output" then
     length = 0.5
-    end_pos = line_position(belt_info.end_pos, belt.direction, line_index)
+    end_pos = line_position(belt_info.end_pos, belt.direction, index)
     start_pos.x = end_pos.x - DX[belt.direction] * length
     start_pos.y = end_pos.y - DY[belt.direction] * length
   end
@@ -994,17 +1005,7 @@ function get_line_info(line, belt)
     start_pos = start_pos,
     end_pos = end_pos,
     length = length,
-    index = line_index,
   }
-end
-
-function get_line_index(line, belt)
-  for i = 1, belt.get_max_transport_line_index() do
-    if line == belt.get_transport_line(i) then
-      return i
-    end
-  end
-  return 0
 end
 
 function line_position(pos, direction, line_index)
@@ -1024,56 +1025,6 @@ function line_position(pos, direction, line_index)
   return result
 end
 
---[[
-function get_same_direction_input_line(belt, line, index)
-  -- 1. Search inside the belt entity and the linked neighbor
-  if belt.type == "underground-belt" and belt.belt_to_ground_type == "output" then
-    local neighbor = belt.neighbours
-    if not neighbor then
-      -- Dead end
-      return
-    else
-      -- Underground section
-      return neighbor.get_transport_line(index+2)
-    end
-  end
-  if belt.type == "linked-belt" and belt.linked_belt_type == "output" then
-    local neighbor = belt.linked_belt_neighbour
-    if neighbor then
-      return neighbor.get_transport_line(index)
-    end
-  end
-
-  -- 2. Search the belt entity inputs
-  for _, input in pairs(belt.belt_neighbours.inputs) do
-    if input.direction == belt.direction then
-      if input.type == "splitter" then
-        local input_line = input.get_transport_line(index+4)
-        if line.line_equals(input_line) then
-          return input_line
-        end
-        input_line = input.get_transport_line(index+6)
-        if line.line_equals(input_line) then
-          return input_line
-        end
-      else
-        local input_line = input.get_transport_line(index)
-        if line.line_equals(input_line) then
-          return input_line
-        end
-      end
-    end
-  end
-
-  -- 3. If the line does not match because the internal transport line changed,
-  -- use LuaTransportBelt.input_lines to find the new line
-  for _, input_line in pairs(line.input_lines) do
-    if line ~= input_line and input_line.owner.direction == belt.direction then
-      return input_line
-    end
-  end
-end
---]]
 
 script.on_init(on_init)
 script.on_configuration_changed(on_configuration_changed)
