@@ -59,7 +59,7 @@ end
 
 function on_configuration_changed()
   for _, player in pairs(game.players) do
-    exit_item_zoom(player)
+    exit_itemcam(player)
   end
   on_runtime_mod_setting_changed()
 end
@@ -95,17 +95,17 @@ function on_console_command(event)
 
   local player = game.get_player(event.player_index)
 
-  -- Exit zoom mode
+  -- Exit itemcam mode
   if player.is_shortcut_toggled("itemcam") then
-    exit_item_zoom(player)
+    exit_itemcam(player)
     return
   end
 
-  -- Enter zoom mode
+  -- Enter itemcam mode
   if player.selected then
     local item = entity_contains_item(player.selected)
     if item then
-      start_item_zoom(player, item, player.selected, nil)
+      start_itemcam(player, item, player.selected, nil)
       return
     end
   end
@@ -134,8 +134,8 @@ function on_player_selected_area(event)
   for _, entity in pairs(entities) do
     local item = entity_contains_item(entity)
     if item then
-      -- Enter zoom mode
-      start_item_zoom(player, item, entity, center)
+      -- Enter itemcam mode
+      start_itemcam(player, item, entity, center)
       return
     end
   end
@@ -739,7 +739,7 @@ function tile_box(box)
   return result
 end
 
-function start_item_zoom(player, item, entity, position)
+function start_itemcam(player, item, entity, position)
   player.set_shortcut_toggled("itemcam", true)
 
   if player.cursor_stack
@@ -778,7 +778,7 @@ function start_item_zoom(player, item, entity, position)
   --global.screenshot_count = 0
 end
 
-function exit_item_zoom(player)
+function exit_itemcam(player)
   player.set_shortcut_toggled("itemcam", false)
 
   local controller = global.zoom_controllers[player.index]
