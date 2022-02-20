@@ -30,7 +30,11 @@ local IS_ROBOT = {
   ["construction-robot"] = true,
   ["logistic-robot"] = true,
 }
-local ALLOWED_CONTROLLERS = {
+local IS_LOADER = {
+  ["loader"] = true,
+  ["loader-1x1"] = true,
+}
+local IS_ALLOWED_CONTROLLER = {
   [defines.controllers.god] = true,
   [defines.controllers.spectator] = true,
 }
@@ -70,7 +74,7 @@ end
 function on_tick()
   for player_index, controller in pairs(global.zoom_controllers) do
     local player = game.get_player(player_index)
-    if ALLOWED_CONTROLLERS[player.controller_type] then
+    if IS_ALLOWED_CONTROLLER[player.controller_type] then
       -- Follow the item
       on_tick_player(player, controller)
     else
@@ -230,60 +234,73 @@ function on_tick_player(player, controller)
         if gap then
           -- Remember which side of the splitter the gap is on
           splitter_output_line = gap.line
+        elseif IS_LOADER[target.type] and target.loader_type == "input"
+        and target.loader_container
+        and target.loader_container.can_insert(controller.item) then
+          -- Loader can move without gaps
         else
           -- There is no gap, the belt is full
           speed = 0
         end
       end
 
+
       controller.belt_progress = controller.belt_progress + speed
 
       -- Did the item move to a different transport line?
       if (controller.belt_progress >= info.length and (target.type ~= "splitter" or controller.index <= 4 or controller.belt_progress >= 1))
       or controller.line.get_item_count(controller.item) == 0 then
-        local output_lines = get_output_lines(target, controller.line, controller.index)
-        local output_line = nil
+        if IS_LOADER[target.type] and target.loader_type == "input" then
+          -- Check loader target
+          if target.loader_container
+          and target.loader_container.get_item_count(controller.item) > 0 then
+            target = target.loader_container
+          end
+        else
+          local output_lines = get_output_lines(target, controller.line, controller.index)
+          local output_line = nil
 
-        -- Pick the splitter line if there are multiple output lines
-        if target.type == "splitter" then
-          for i = 1, #output_lines do
-            if output_lines[i] == splitter_output_line
-            and output_lines[i].get_item_count(controller.item) > 0 then
-              output_line = output_lines[i]
-              break
+          -- Pick the splitter line if there are multiple output lines
+          if target.type == "splitter" then
+            for i = 1, #output_lines do
+              if output_lines[i] == splitter_output_line
+              and output_lines[i].get_item_count(controller.item) > 0 then
+                output_line = output_lines[i]
+                break
+              end
             end
           end
-        end
 
-        -- Pick a random line if there are multiple output lines
-        if not output_line then
-          shuffle(output_lines)
-          for i = 1, #output_lines do
-            if output_lines[i] ~= controller.line
-            and output_lines[i].get_item_count(controller.item) > 0 then
-              output_line = output_lines[i]
-              break
+          -- Pick a random line if there are multiple output lines
+          if not output_line then
+            shuffle(output_lines)
+            for i = 1, #output_lines do
+              if output_lines[i] ~= controller.line
+              and output_lines[i].get_item_count(controller.item) > 0 then
+                output_line = output_lines[i]
+                break
+              end
             end
           end
-        end
 
-        if output_line then
-          -- Reset progress, except inside a splitter
-          local owner = output_line.owner
-          if target.type ~= "splitter" or target ~= owner then
-            controller.belt_progress = controller.belt_progress - info.length
-            if controller.belt_progress > target.prototype.belt_speed
-            or controller.belt_progress < 0 then
-              controller.belt_progress = 0
+          if output_line then
+            -- Reset progress, except inside a splitter
+            local owner = output_line.owner
+            if target.type ~= "splitter" or target ~= owner then
+              controller.belt_progress = controller.belt_progress - info.length
+              if controller.belt_progress > target.prototype.belt_speed
+              or controller.belt_progress < 0 then
+                controller.belt_progress = 0
+              end
             end
+            -- Move to new transport line
+            target = owner
+            controller.line = output_line
+            controller.index = get_line_index(target, output_line)
+            controller.first_line = nil
+            TransportGraph.move_to(controller.graph, target, output_line, controller.index)
+            info = nil
           end
-          -- Move to new transport line
-          target = owner
-          controller.line = output_line
-          controller.index = get_line_index(target, output_line)
-          controller.first_line = nil
-          TransportGraph.move_to(controller.graph, target, output_line, controller.index)
-          info = nil
         end
       end
     end
@@ -980,8 +997,7 @@ function get_line_info(belt, index)
 
   elseif (belt.type == "underground-belt" and belt.belt_to_ground_type == "input" and index <= 2)
   or (belt.type == "linked-belt" and belt.linked_belt_type == "input")
-  or (belt.type == "loader" and belt.loader_type == "input")
-  or (belt.type == "loader-1x1" and belt.loader_type == "input") then
+  or (IS_LOADER[belt.type] and belt.loader_type == "input") then
     start_pos = line_position(belt_info.start_pos, belt.direction, index)
     end_pos.x = start_pos.x + DX[belt.direction] * length
     end_pos.y = start_pos.y + DY[belt.direction] * length
@@ -998,8 +1014,7 @@ function get_line_info(belt, index)
 
   elseif (belt.type == "underground-belt" and belt.belt_to_ground_type == "output")
   or (belt.type == "linked-belt" and belt.linked_belt_type == "output")
-  or (belt.type == "loader" and belt.loader_type == "output")
-  or (belt.type == "loader-1x1" and belt.loader_type == "output") then
+  or (IS_LOADER[belt.type] and belt.loader_type == "output") then
     end_pos = line_position(belt_info.end_pos, belt.direction, index)
     start_pos.x = end_pos.x - DX[belt.direction] * length
     start_pos.y = end_pos.y - DY[belt.direction] * length
