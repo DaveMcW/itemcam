@@ -149,7 +149,8 @@ function on_tick_player(player, controller)
     for _, grabber in pairs(controller.grabbers) do
       if grabber.entity.valid
       and grabber.entity.type == "inserter"
-      and entity_contains_item(grabber.entity, controller.item)
+      and grabber.entity.held_stack.valid_for_read
+      and grabber.entity.held_stack.name == controller.item
       and grabber.entity.held_stack.count > grabber.count then
         target = grabber.entity
         break
@@ -182,17 +183,19 @@ function on_tick_player(player, controller)
   -- Did something grab the item from our target?
   elseif target.get_output_inventory() and controller.grabbers then
     for _, grabber in pairs(controller.grabbers) do
-      if grabber.entity.valid
-      and entity_contains_item(grabber.entity, controller.item) then
+      if grabber.entity.valid then
         if grabber.entity.type == "inserter"
+        and grabber.entity.held_stack.valid_for_read
+        and grabber.entity.held_stack.name == controller.item
         and grabber.entity.held_stack_position.x == grabber.entity.pickup_position.x
         and grabber.entity.held_stack_position.y == grabber.entity.pickup_position.y
         and grabber.entity.held_stack.count > grabber.count then
           target = grabber.entity
           break
         elseif IS_ROBOT[grabber.entity.type]
-        and target.position.x == grabber.entity.position.x
-        and target.position.y == grabber.entity.position.y then
+        and grabber.entity.get_item_count(controller.item) > 0
+        and grabber.entity.position.x == target.position.x
+        and grabber.entity.position.y == target.position.y then
           target = grabber.entity
           break
         end
@@ -205,7 +208,8 @@ function on_tick_player(player, controller)
     for _, grabber in pairs(controller.grabbers) do
       if grabber.entity.valid
       and grabber.entity.type == "inserter"
-      and entity_contains_item(grabber.entity, controller.item)
+      and grabber.entity.held_stack.valid_for_read
+      and grabber.entity.held_stack.name == controller.item
       and grabber.entity.held_stack.count > grabber.count then
         target = grabber.entity
         -- Use current position instead of inserter.pickup_position
@@ -312,8 +316,8 @@ function on_tick_player(player, controller)
       if target.drop_target then
         -- Inserter definitely dropped an item, move to target without counting.
         -- Mining drill might not have dropped an item, so count first.
-        if (target.type == "inserter"
-        or entity_contains_item(target.drop_target, controller.item)) then
+        if target.type == "inserter"
+        or target.drop_target.get_item_count(controller.item) > 0 then
           target = target.drop_target
           find_transport_line(target, controller, target.drop_position)
           if IS_CRAFTING_MACHINE[target.type] then
@@ -342,7 +346,7 @@ function on_tick_player(player, controller)
         limit = 1,
       }[1]
       if found then
-        if entity_contains_item(found, controller.item) then
+        if found.get_item_count(controller.item) > 0 then
           target = found
         else
           -- Did an inserter grab the item in the same tick?
@@ -361,7 +365,7 @@ function on_tick_player(player, controller)
         limit = 1,
       }[1]
       if found then
-        if entity_contains_item(found, controller.item) then
+        if found.get_item_count(controller.item) then
           target = found
         else
           -- Did an inserter grab the item in the same tick?
@@ -519,7 +523,7 @@ function on_tick_player(player, controller)
       force = target.force,
     }
     for _, robot in pairs(robots) do
-      if not entity_contains_item(robot) then
+      if not robot.has_items_inside() then
         table.insert(controller.grabbers, {entity=robot, count=0})
       end
     end
@@ -557,9 +561,10 @@ function find_picking_inserter(entity, item)
   }
   for _, inserter in pairs(inserters) do
     if inserter.pickup_target == entity
+    and inserter.held_stack.valid_for_read
+    and inserter.held_stack.name == item
     and inserter.held_stack_position.x == inserter.pickup_position.x
-    and inserter.held_stack_position.y == inserter.pickup_position.y
-    and entity_contains_item(inserter, item) then
+    and inserter.held_stack_position.y == inserter.pickup_position.y then
       return inserter
     end
   end
@@ -834,20 +839,19 @@ function entity_contains_item(entity, item)
       -- Pick a random line
       shuffle(indexes)
     end
-
     for _, i in pairs(indexes) do
       local line = entity.get_transport_line(i)
       found = inventory_contains_item(line, item)
       if found then return found end
     end
+    return
 
   elseif IS_ROBOT[entity.type] then
     inventory = entity.get_inventory(defines.inventory.robot_cargo)
     found = inventory_contains_item(inventory, item)
     if found then return found end
     inventory = entity.get_inventory(defines.inventory.robot_repair)
-    found = inventory_contains_item(inventory, item)
-    if found then return found end
+    return inventory_contains_item(inventory, item)
 
   elseif entity.type == "mining-drill" then
     local target = entity.mining_target
@@ -869,17 +873,16 @@ function entity_contains_item(entity, item)
   -- Check current recipe
 
   elseif entity.type == "assembling-machine" or entity.type == "furnace" then
-    if entity.is_crafting() then
-      return recipe_contains_item(entity.get_recipe(), item)
-    end
+    if not entity.is_crafting() then return end
+    return recipe_contains_item(entity.get_recipe(), item)
 
-  elseif entity.type == "reactor"
-  or entity.type == "burner-generator" then
+  elseif entity.type == "reactor" or entity.type == "burner-generator" then
     local product = entity.burner and entity.burner.currently_burning and entity.burner.currently_burning.burnt_result
     if product and product.type == "item" then
       if item and product.name ~= item then return end
       return product.name
     end
+    return
   end
 
 end
