@@ -103,8 +103,8 @@ function on_console_command(event)
 
   -- Enter itemcam mode
   if player.selected then
-    local item = entity_contains_item(player.selected)
-    if item then
+    local item = select_item(player.selected)
+    if item or is_crafting_item(entity) then
       start_itemcam(player, item, player.selected, nil)
       return
     end
@@ -132,8 +132,8 @@ function on_player_selected_area(event)
   table.sort(entities, function (a, b) return cmp_dist(a.position, center) < cmp_dist(b.position, center) end)
 
   for _, entity in pairs(entities) do
-    local item = entity_contains_item(entity)
-    if item then
+    local item = select_item(entity, center)
+    if item or is_crafting_item(entity) then
       -- Enter itemcam mode
       start_itemcam(player, item, entity, center)
       return
@@ -147,12 +147,13 @@ function on_tick_player(player, camera)
   -- Target was destroyed... but did something grab it?
   if not target.valid and camera.entity_type == "item-entity" and camera.grabbers then
     for _, grabber in pairs(camera.grabbers) do
-      if grabber.entity.valid
-      and grabber.entity.type == "inserter"
-      and grabber.entity.held_stack.valid_for_read
-      and grabber.entity.held_stack.name == camera.item
-      and grabber.entity.held_stack.count > grabber.count then
-        target = grabber.entity
+      local entity = grabber.entity
+      if entity.valid
+      and entity.type == "inserter"
+      and entity.held_stack.valid_for_read
+      and entity.held_stack.name == camera.item
+      and entity.held_stack.count > grabber.count then
+        target = entity
         break
       end
     end
@@ -168,13 +169,7 @@ function on_tick_player(player, camera)
 
   -- Did we create a new item?
   if not camera.item and IS_CRAFTING_MACHINE[target.type] then
-    local items = {}
-    for item in pairs(target.get_output_inventory().get_contents()) do
-      table.insert(items, item)
-    end
-    if #items > 0 then
-      camera.item = items[math.random(#items)]
-    end
+    camera.item = random_inventory_item(target.get_output_inventory())
   end
 
   if not camera.item then
@@ -183,20 +178,21 @@ function on_tick_player(player, camera)
   -- Did something grab the item from our target?
   elseif target.get_output_inventory() and camera.grabbers then
     for _, grabber in pairs(camera.grabbers) do
-      if grabber.entity.valid then
-        if grabber.entity.type == "inserter"
-        and grabber.entity.held_stack.valid_for_read
-        and grabber.entity.held_stack.name == camera.item
-        and grabber.entity.held_stack_position.x == grabber.entity.pickup_position.x
-        and grabber.entity.held_stack_position.y == grabber.entity.pickup_position.y
-        and grabber.entity.held_stack.count > grabber.count then
-          target = grabber.entity
+      local entity = grabber.entity
+      if entity.valid then
+        if entity.type == "inserter"
+        and entity.held_stack.valid_for_read
+        and entity.held_stack.name == camera.item
+        and entity.held_stack_position.x == entity.pickup_position.x
+        and entity.held_stack_position.y == entity.pickup_position.y
+        and entity.held_stack.count > grabber.count then
+          target = entity
           break
-        elseif IS_ROBOT[grabber.entity.type]
-        and grabber.entity.get_item_count(camera.item) > 0
-        and grabber.entity.position.x == target.position.x
-        and grabber.entity.position.y == target.position.y then
-          target = grabber.entity
+        elseif IS_ROBOT[entity.type]
+        and entity.get_item_count(camera.item) > 0
+        and entity.position.x == target.position.x
+        and entity.position.y == target.position.y then
+          target = entity
           break
         end
       end
@@ -206,12 +202,13 @@ function on_tick_player(player, camera)
   and not target.drop_target
   and camera.grabbers then
     for _, grabber in pairs(camera.grabbers) do
-      if grabber.entity.valid
-      and grabber.entity.type == "inserter"
-      and grabber.entity.held_stack.valid_for_read
-      and grabber.entity.held_stack.name == camera.item
-      and grabber.entity.held_stack.count > grabber.count then
-        target = grabber.entity
+      local entity = grabber.entity
+      if entity.valid
+      and entity.type == "inserter"
+      and entity.held_stack.valid_for_read
+      and entity.held_stack.name == camera.item
+      and entity.held_stack.count > grabber.count then
+        target = entity
         -- Use current position instead of inserter.pickup_position
         camera.pickup_position = target.held_stack_position
         break
@@ -495,16 +492,17 @@ function on_tick_player(player, camera)
 
   -- Update item count
   for _, grabber in pairs(camera.grabbers) do
-    if grabber.entity.valid then
+    local entity = grabber.entity
+    if entity.valid then
+      grabber.count = 0
       if camera.item then
-        grabber.count = grabber.entity.get_item_count(camera.item)
-      else
-        grabber.count = grabber.entity.get_item_count()
-      end
-      if grabber.entity.type == "inserter"
-      and grabber.entity.held_stack.valid_for_read
-      and grabber.entity.held_stack.name == camera.item then
-        grabber.count = grabber.entity.held_stack.count
+        if entity.type == "inserter"
+        and entity.held_stack.valid_for_read
+        and entity.held_stack.name == camera.item then
+          grabber.count = entity.held_stack.count
+        else
+          grabber.count = entity.get_item_count(camera.item)
+        end
       end
     end
   end
@@ -812,21 +810,19 @@ function cmp_dist(a, b)
   return (a.x-b.x)*(a.x-b.x) + (a.y-b.y)*(a.y-b.y)
 end
 
---- Return item parameter if it exists in the entity.
---- Return random item if item parameter is nil.
-function entity_contains_item(entity, item)
+--- Return an item if it exists in the entity.
+function select_item(entity, position)
 
   -- Check output inventory
 
   local inventory = entity.get_output_inventory()
-  local found = inventory_contains_item(inventory, item)
-  if found then return found end
+  local item = random_inventory_item(inventory)
+  if item then return item end
 
   -- Check more inventories
 
   if entity.type == "inserter" then
     if not entity.held_stack.valid_for_read then return end
-    if item and entity.held_stack.name ~= item then return end
     return entity.held_stack.name
 
   elseif HAS_TRANSPORT_LINE[entity.type] then
@@ -834,77 +830,95 @@ function entity_contains_item(entity, item)
     for i = 1, entity.get_max_transport_line_index() do
       table.insert(indexes, i)
     end
-    if item == nil then
+    if position then
+      -- Pick the line closest to the selection point
+      -- TODO: Implement
+    else
       -- Pick a random line
       shuffle(indexes)
     end
     for _, i in pairs(indexes) do
       local line = entity.get_transport_line(i)
-      found = inventory_contains_item(line, item)
-      if found then return found end
+      item = random_inventory_item(line)
+      if item then return item end
     end
     return
 
   elseif IS_ROBOT[entity.type] then
     inventory = entity.get_inventory(defines.inventory.robot_cargo)
-    found = inventory_contains_item(inventory, item)
-    if found then return found end
+    item = random_inventory_item(inventory)
+    if item then return item end
     inventory = entity.get_inventory(defines.inventory.robot_repair)
-    return inventory_contains_item(inventory, item)
+    return random_inventory_item(inventory)
 
   elseif entity.type == "mining-drill" then
     local target = entity.mining_target
     if not target then return end
-    return recipe_contains_item(target.prototype.mineable_properties, item)
+    return random_recipe_item(target.prototype.mineable_properties)
 
   elseif entity.type == "roboport" then
     inventory = entity.get_inventory(defines.inventory.roboport_material)
-    return inventory_contains_item(inventory, item)
+    return random_inventory_item(inventory)
 
   elseif entity.type == "cargo-wagon" then
     inventory = entity.get_inventory(defines.inventory.cargo_wagon)
-    return inventory_contains_item(inventory, item)
+    return random_inventory_item(inventory)
 
   elseif entity.type == "artillery-wagon" then
     inventory = entity.get_inventory(defines.inventory.artillery_wagon_ammo)
-    return inventory_contains_item(inventory, item)
+    return random_inventory_item(inventory)
 
-  -- Check current recipe
-
-  elseif entity.type == "assembling-machine" or entity.type == "furnace" then
-    if not entity.is_crafting() then return end
-    return recipe_contains_item(entity.get_recipe(), item)
-
-  elseif entity.type == "reactor" or entity.type == "burner-generator" then
-    local product = entity.burner and entity.burner.currently_burning and entity.burner.currently_burning.burnt_result
-    if product and product.type == "item" then
-      if item and product.name ~= item then return end
-      return product.name
-    end
-    return
   end
 
 end
 
---- Return item parameter if it exists in the inventory.
---- Return random item if item parameter is nil.
-function inventory_contains_item(inventory, item)
-  if not inventory then return end
-  if inventory.get_item_count() == 0 then return end
-  if item and inventory.get_item_count(item) == 0 then return end
-  if item then return item end
-  local found,count = next(inventory.get_contents());
-  return found
+--- Is the entity crafting or burning a recipe that outputs an item?
+function is_crafting_item(entity)
+  if entity.type == "assembling-machine" or entity.type == "furnace" then
+    if entity.is_crafting() then
+      for _, product in pairs(entity.get_recipe().products) do
+        if product.type == "item" then return true end
+      end
+    end
+
+  elseif entity.type == "reactor" or entity.type == "burner-generator" then
+    local product = (entity.burner and entity.burner.currently_burning and entity.burner.currently_burning.burnt_result)
+    return (product and product.type == "item")
+  end
 end
 
---- Return item parameter if it exists in the recipe products.
---- Return random product if item parameter is nil.
-function recipe_contains_item(recipe, item)
-  if not recipe.products then return end
-  for _, product in pairs(recipe.products) do
-    if product.type == "item" then
-      if item and product.name ~= item then return end
-      return product.name
+--- Return random item from the inventory.
+function random_inventory_item(inventory)
+  if not inventory then return end
+  if inventory.get_item_count() == 0 then return end
+
+  local start = math.random(#inventory)
+  for i = start, #inventory do
+    if inventory[i].valid_for_read then
+      return inventory[i].name
+    end
+  end
+  for i = 1, start-1 do
+    if inventory[i].valid_for_read then
+      return inventory[i].name
+    end
+  end
+end
+
+--- Return random item from the recipe.
+function random_recipe_item(recipe)
+  local products = recipe.products
+  if not products then return end
+
+  local start = math.random(#products)
+  for i = start, #products do
+    if products[i].type == "item" then
+      return products[i].name
+    end
+  end
+  for i = 1, start-1 do
+    if products[i].type == "item" then
+      return products[i].name
     end
   end
 end
