@@ -30,6 +30,10 @@ local IS_ROBOT = {
   ["construction-robot"] = true,
   ["logistic-robot"] = true,
 }
+local ALLOWED_CONTROLLERS = {
+  [defines.controllers.god] = true,
+  [defines.controllers.spectator] = true,
+}
 local DX = {
   [defines.direction.north] = 0,
   [defines.direction.east] = 1,
@@ -66,28 +70,44 @@ end
 function on_tick()
   for player_index, controller in pairs(global.zoom_controllers) do
     local player = game.get_player(player_index)
-    if player.controller_type ~= defines.controllers.god then
-      -- The controller changed somehow, abort everything
-      global.zoom_controllers[player_index] = nil
-    else
+    if ALLOWED_CONTROLLERS[player.controller_type] then
       -- Follow the item
       on_tick_player(player, controller)
+    else
+      -- The controller changed somehow, abort everything
+      global.zoom_controllers[player_index] = nil
     end
   end
 end
 
 function on_lua_shortcut(event)
-  if event.prototype_name ~= "itemcam" then return end
+  if event.prototype_name == "itemcam" then
+    on_console_command(event)
+  end
+end
 
-  -- Player clicked the mod button
+function on_console_command(event)
+  if event.player_index == nil then return end
+
   local player = game.get_player(event.player_index)
 
+  -- Exit zoom mode
   if player.is_shortcut_toggled("itemcam") then
-    -- Exit zoom mode
     exit_item_zoom(player)
+    return
+  end
 
-  elseif player.cursor_stack then
-    -- Give the player a selection tool
+  -- Enter zoom mode
+  if player.selected then
+    local item = entity_contains_item(player.selected)
+    if item then
+      start_item_zoom(player, item, player.selected, nil)
+      return
+    end
+  end
+
+  -- Give the player a selection tool
+  if player.cursor_stack then
     player.clear_cursor()
     player.cursor_stack.set_stack("itemcam")
   end
@@ -699,7 +719,13 @@ end
 
 function start_item_zoom(player, item, entity, position)
   player.set_shortcut_toggled("itemcam", true)
-  player.clear_cursor()
+
+  if player.cursor_stack
+  and player.cursor_stack.valid_for_read
+  and player.cursor_stack.name == "itemcam" then
+    player.clear_cursor()
+  end
+
   if player.character then
     player.character.walking_state = {walking = false}
   end
@@ -718,12 +744,16 @@ function start_item_zoom(player, item, entity, position)
   global.zoom_controllers[player.index] = controller
 
   -- Swap to god controller
-  player.set_controller{type = defines.controllers.god}
+  if player.controller_type ~= defines.controllers.spectator then
+    player.set_controller{type = defines.controllers.god}
+  end
+
+  -- Set initial zoom
   player.teleport(entity.position, entity.surface)
   player.zoom = 2
 
   -- Take screenshots
-  global.screenshot_count = 0
+  --global.screenshot_count = 0
 end
 
 function exit_item_zoom(player)
@@ -912,10 +942,15 @@ function get_belt_info(belt)
     end
   end
 
-  start_pos.x = belt.position.x - 0.5 * DX[input_direction]
-  start_pos.y = belt.position.y - 0.5 * DY[input_direction]
-  end_pos.x = belt.position.x + 0.5 * DX[belt.direction]
-  end_pos.y = belt.position.y + 0.5 * DY[belt.direction]
+  local offset = 0.5
+  if belt.type == "loader" then
+    offset = 1
+  end
+
+  start_pos.x = belt.position.x - offset * DX[input_direction]
+  start_pos.y = belt.position.y - offset * DY[input_direction]
+  end_pos.x = belt.position.x + offset * DX[belt.direction]
+  end_pos.y = belt.position.y + offset * DY[belt.direction]
 
   return {
     input_direction = input_direction,
@@ -928,7 +963,7 @@ function get_line_info(belt, index)
   local belt_info = get_belt_info(belt)
   local start_pos = belt.position
   local end_pos = belt.position
-  local length = 1
+  local length = 0.5
 
   if belt.type == "transport-belt" then
     start_pos = line_position(belt_info.start_pos, belt_info.input_direction, index)
@@ -936,22 +971,22 @@ function get_line_info(belt, index)
     -- Adjust length of curved belts
     -- https://forums.factorio.com/viewtopic.php?p=554468#p554468
     local distance = math.abs(start_pos.x - end_pos.x) + math.abs(start_pos.y - end_pos.y)
+    length = 1
     if distance < 1 then
       length = 106 / 256
     elseif distance > 1 then
       length = 295 / 256
     end
 
-  elseif belt.type == "underground-belt" and belt.belt_to_ground_type == "input"
-  and index <= 2 then
-    length = 0.5
+  elseif (belt.type == "underground-belt" and belt.belt_to_ground_type == "input" and index <= 2)
+  or (belt.type == "linked-belt" and belt.linked_belt_type == "input")
+  or (belt.type == "loader" and belt.loader_type == "input")
+  or (belt.type == "loader-1x1" and belt.loader_type == "input") then
     start_pos = line_position(belt_info.start_pos, belt.direction, index)
     end_pos.x = start_pos.x + DX[belt.direction] * length
     end_pos.y = start_pos.y + DY[belt.direction] * length
 
-  elseif belt.type == "underground-belt" and belt.belt_to_ground_type == "input"
-  and index > 2 then
-    length = 0.5
+  elseif belt.type == "underground-belt" and belt.belt_to_ground_type == "input" and index > 2 then
     start_pos = line_position(belt.position, belt.direction, index)
     local neighbor = belt.neighbours
     if neighbor then
@@ -961,11 +996,13 @@ function get_line_info(belt, index)
     end_pos.x = start_pos.x + DX[belt.direction] * length
     end_pos.y = start_pos.y + DY[belt.direction] * length
 
-  elseif belt.type == "underground-belt" and belt.belt_to_ground_type == "output" then
-    length = 0.5
-    start_pos = line_position(belt.position, belt.direction, index)
-    end_pos.x = start_pos.x + DX[belt.direction] * length
-    end_pos.y = start_pos.y + DY[belt.direction] * length
+  elseif (belt.type == "underground-belt" and belt.belt_to_ground_type == "output")
+  or (belt.type == "linked-belt" and belt.linked_belt_type == "output")
+  or (belt.type == "loader" and belt.loader_type == "output")
+  or (belt.type == "loader-1x1" and belt.loader_type == "output") then
+    end_pos = line_position(belt_info.end_pos, belt.direction, index)
+    start_pos.x = end_pos.x - DX[belt.direction] * length
+    start_pos.y = end_pos.y - DY[belt.direction] * length
 
   elseif belt.type == "splitter" then
     if index <= 4 then
@@ -985,18 +1022,6 @@ function get_line_info(belt, index)
     -- so use one start_pos and end_pos for the entire splitter
     end_pos.x = start_pos.x + DX[belt.direction]
     end_pos.y = start_pos.y + DY[belt.direction]
-
-  elseif belt.type == "linked-belt" and belt.linked_belt_type == "input" then
-    length = 0.5
-    start_pos = line_position(belt_info.start_pos, belt.direction, index)
-    end_pos.x = start_pos.x + DX[belt.direction] * length
-    end_pos.y = start_pos.y + DY[belt.direction] * length
-
-  elseif belt.type == "linked-belt" and belt.linked_belt_type == "output" then
-    length = 0.5
-    end_pos = line_position(belt_info.end_pos, belt.direction, index)
-    start_pos.x = end_pos.x - DX[belt.direction] * length
-    start_pos.y = end_pos.y - DY[belt.direction] * length
   end
 
   return {
@@ -1041,3 +1066,4 @@ script.on_event(defines.events.on_tick, on_tick)
 script.on_event(defines.events.on_player_selected_area, on_player_selected_area)
 script.on_event(defines.events.on_player_alt_selected_area, on_player_selected_area)
 script.on_event(defines.events.on_lua_shortcut, on_lua_shortcut)
+commands.add_command("itemcam", {"command-help.itemcam"}, on_console_command)
