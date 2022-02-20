@@ -53,7 +53,7 @@ local DY = {
 local SPLITTER_SIDE = {-0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 0.5, 0.5}
 
 function on_init()
-  global.zoom_controllers = {}
+  global.cameras = {}
   on_configuration_changed()
 end
 
@@ -72,14 +72,14 @@ function on_runtime_mod_setting_changed()
 end
 
 function on_tick()
-  for player_index, controller in pairs(global.zoom_controllers) do
+  for player_index, camera in pairs(global.cameras) do
     local player = game.get_player(player_index)
     if IS_ALLOWED_CONTROLLER[player.controller_type] then
       -- Follow the item
-      on_tick_player(player, controller)
+      on_tick_player(player, camera)
     else
       -- The controller changed somehow, abort everything
-      global.zoom_controllers[player_index] = nil
+      global.cameras[player_index] = nil
     end
   end
 end
@@ -120,7 +120,7 @@ end
 function on_player_selected_area(event)
   if event.item ~= "itemcam" then return end
 
-  -- Player selected an entity to zoom in
+  -- Player selected an entity to follow
   local player = game.get_player(event.player_index)
 
   -- Sort entities by distance from selection center
@@ -141,16 +141,16 @@ function on_player_selected_area(event)
   end
 end
 
-function on_tick_player(player, controller)
-  local target = controller.entity
+function on_tick_player(player, camera)
+  local target = camera.entity
 
   -- Target was destroyed... but did something grab it?
-  if not target.valid and controller.entity_type == "item-entity" and controller.grabbers then
-    for _, grabber in pairs(controller.grabbers) do
+  if not target.valid and camera.entity_type == "item-entity" and camera.grabbers then
+    for _, grabber in pairs(camera.grabbers) do
       if grabber.entity.valid
       and grabber.entity.type == "inserter"
       and grabber.entity.held_stack.valid_for_read
-      and grabber.entity.held_stack.name == controller.item
+      and grabber.entity.held_stack.name == camera.item
       and grabber.entity.held_stack.count > grabber.count then
         target = grabber.entity
         break
@@ -160,40 +160,40 @@ function on_tick_player(player, controller)
 
   -- Target was destroyed
   if not target.valid then
-    controller.grabbers = nil
+    camera.grabbers = nil
     return
   end
 
   local info = nil
 
   -- Did we create a new item?
-  if not controller.item and IS_CRAFTING_MACHINE[target.type] then
+  if not camera.item and IS_CRAFTING_MACHINE[target.type] then
     local items = {}
     for item in pairs(target.get_output_inventory().get_contents()) do
       table.insert(items, item)
     end
     if #items > 0 then
-      controller.item = items[math.random(#items)]
+      camera.item = items[math.random(#items)]
     end
   end
 
-  if not controller.item then
+  if not camera.item then
     -- Wait for a new item to be crafted
 
   -- Did something grab the item from our target?
-  elseif target.get_output_inventory() and controller.grabbers then
-    for _, grabber in pairs(controller.grabbers) do
+  elseif target.get_output_inventory() and camera.grabbers then
+    for _, grabber in pairs(camera.grabbers) do
       if grabber.entity.valid then
         if grabber.entity.type == "inserter"
         and grabber.entity.held_stack.valid_for_read
-        and grabber.entity.held_stack.name == controller.item
+        and grabber.entity.held_stack.name == camera.item
         and grabber.entity.held_stack_position.x == grabber.entity.pickup_position.x
         and grabber.entity.held_stack_position.y == grabber.entity.pickup_position.y
         and grabber.entity.held_stack.count > grabber.count then
           target = grabber.entity
           break
         elseif IS_ROBOT[grabber.entity.type]
-        and grabber.entity.get_item_count(controller.item) > 0
+        and grabber.entity.get_item_count(camera.item) > 0
         and grabber.entity.position.x == target.position.x
         and grabber.entity.position.y == target.position.y then
           target = grabber.entity
@@ -204,43 +204,43 @@ function on_tick_player(player, controller)
 
   elseif (HAS_TRANSPORT_LINE[target.type] or target.type == "inserter")
   and not target.drop_target
-  and controller.grabbers then
-    for _, grabber in pairs(controller.grabbers) do
+  and camera.grabbers then
+    for _, grabber in pairs(camera.grabbers) do
       if grabber.entity.valid
       and grabber.entity.type == "inserter"
       and grabber.entity.held_stack.valid_for_read
-      and grabber.entity.held_stack.name == controller.item
+      and grabber.entity.held_stack.name == camera.item
       and grabber.entity.held_stack.count > grabber.count then
         target = grabber.entity
         -- Use current position instead of inserter.pickup_position
-        controller.pickup_position = target.held_stack_position
+        camera.pickup_position = target.held_stack_position
         break
       end
     end
 
     -- Move the item down the transport line
     if HAS_TRANSPORT_LINE[target.type] then
-      info = get_line_info(target, controller.index)
+      info = get_line_info(target, camera.index)
       local speed = target.prototype.belt_speed
 
       -- Stop at the end of the transport line
-      if controller.belt_progress >= info.length then
+      if camera.belt_progress >= info.length then
         -- Ignore transport line split inside splitter
-        if target.type ~= "splitter" or controller.belt_progress >= 1 then
+        if target.type ~= "splitter" or camera.belt_progress >= 1 then
           speed = 0
         end
       end
 
       -- Stop if the belt is full
       local splitter_output_line = nil
-      if speed > 0 and not controller.first_line then
-        local gap = TransportGraph.has_gap(controller.graph)
+      if speed > 0 and not camera.first_line then
+        local gap = TransportGraph.has_gap(camera.graph)
         if gap then
           -- Remember which side of the splitter the gap is on
           splitter_output_line = gap.line
         elseif IS_LOADER[target.type] and target.loader_type == "input"
         and target.loader_container
-        and target.loader_container.can_insert(controller.item) then
+        and target.loader_container.can_insert(camera.item) then
           -- Loader can move without gaps
         else
           -- There is no gap, the belt is full
@@ -249,26 +249,26 @@ function on_tick_player(player, controller)
       end
 
 
-      controller.belt_progress = controller.belt_progress + speed
+      camera.belt_progress = camera.belt_progress + speed
 
       -- Did the item move to a different transport line?
-      if (controller.belt_progress >= info.length and (target.type ~= "splitter" or controller.index <= 4 or controller.belt_progress >= 1))
-      or controller.line.get_item_count(controller.item) == 0 then
+      if (camera.belt_progress >= info.length and (target.type ~= "splitter" or camera.index <= 4 or camera.belt_progress >= 1))
+      or camera.line.get_item_count(camera.item) == 0 then
         if IS_LOADER[target.type] and target.loader_type == "input" then
           -- Check loader target
           if target.loader_container
-          and target.loader_container.get_item_count(controller.item) > 0 then
+          and target.loader_container.get_item_count(camera.item) > 0 then
             target = target.loader_container
           end
         else
-          local output_lines = get_output_lines(target, controller.line, controller.index)
+          local output_lines = get_output_lines(target, camera.line, camera.index)
           local output_line = nil
 
           -- Pick the splitter line if there are multiple output lines
           if target.type == "splitter" then
             for i = 1, #output_lines do
               if output_lines[i] == splitter_output_line
-              and output_lines[i].get_item_count(controller.item) > 0 then
+              and output_lines[i].get_item_count(camera.item) > 0 then
                 output_line = output_lines[i]
                 break
               end
@@ -279,8 +279,8 @@ function on_tick_player(player, controller)
           if not output_line then
             shuffle(output_lines)
             for i = 1, #output_lines do
-              if output_lines[i] ~= controller.line
-              and output_lines[i].get_item_count(controller.item) > 0 then
+              if output_lines[i] ~= camera.line
+              and output_lines[i].get_item_count(camera.item) > 0 then
                 output_line = output_lines[i]
                 break
               end
@@ -291,18 +291,18 @@ function on_tick_player(player, controller)
             -- Reset progress, except inside a splitter
             local owner = output_line.owner
             if target.type ~= "splitter" or target ~= owner then
-              controller.belt_progress = controller.belt_progress - info.length
-              if controller.belt_progress > target.prototype.belt_speed
-              or controller.belt_progress < 0 then
-                controller.belt_progress = 0
+              camera.belt_progress = camera.belt_progress - info.length
+              if camera.belt_progress > target.prototype.belt_speed
+              or camera.belt_progress < 0 then
+                camera.belt_progress = 0
               end
             end
             -- Move to new transport line
             target = owner
-            controller.line = output_line
-            controller.index = get_line_index(target, output_line)
-            controller.first_line = nil
-            TransportGraph.move_to(controller.graph, target, output_line, controller.index)
+            camera.line = output_line
+            camera.index = get_line_index(target, output_line)
+            camera.first_line = nil
+            TransportGraph.move_to(camera.graph, target, output_line, camera.index)
             info = nil
           end
         end
@@ -310,18 +310,18 @@ function on_tick_player(player, controller)
     end
 
   -- Did the target drop the item somewhere?
-  elseif dropper_item_count(target, controller.item) < controller.count
+  elseif dropper_item_count(target, camera.item) < camera.count
   or target.type == "mining-drill" then
     if target.type == "inserter" or target.type == "mining-drill" then
       if target.drop_target then
         -- Inserter definitely dropped an item, move to target without counting.
         -- Mining drill might not have dropped an item, so count first.
         if target.type == "inserter"
-        or target.drop_target.get_item_count(controller.item) > 0 then
+        or target.drop_target.get_item_count(camera.item) > 0 then
           target = target.drop_target
-          find_transport_line(target, controller, target.drop_position)
+          find_transport_line(target, camera, target.drop_position)
           if IS_CRAFTING_MACHINE[target.type] then
-            controller.item = nil
+            camera.item = nil
           end
         end
       else
@@ -331,7 +331,7 @@ function on_tick_player(player, controller)
           position = target.drop_position,
         }
         for _, item in pairs(items) do
-          if item.stack.name == controller.item then
+          if item.stack.name == camera.item then
             target = item
             break
           end
@@ -346,11 +346,11 @@ function on_tick_player(player, controller)
         limit = 1,
       }[1]
       if found then
-        if found.get_item_count(controller.item) > 0 then
+        if found.get_item_count(camera.item) > 0 then
           target = found
         else
           -- Did an inserter grab the item in the same tick?
-          found = find_picking_inserter(found, controller.item)
+          found = find_picking_inserter(found, camera.item)
           if found then
             target = found
           end
@@ -365,11 +365,11 @@ function on_tick_player(player, controller)
         limit = 1,
       }[1]
       if found then
-        if found.get_item_count(controller.item) then
+        if found.get_item_count(camera.item) then
           target = found
         else
           -- Did an inserter grab the item in the same tick?
-          found = find_picking_inserter(found, controller.item)
+          found = find_picking_inserter(found, camera.item)
           if found then
             target = found
           end
@@ -378,7 +378,7 @@ function on_tick_player(player, controller)
 
       -- Search for a new building
       if target.type == "construction-robot" then
-        local prototype = game.item_prototypes[controller.item]
+        local prototype = game.item_prototypes[camera.item]
         if prototype.place_result then
           found = target.surface.find_entities_filtered{
             name = prototype.place_result.name,
@@ -399,13 +399,13 @@ function on_tick_player(player, controller)
   local position = target.position
   local belt_progress = nil
   if HAS_TRANSPORT_LINE[target.type] then
-    belt_progress = controller.belt_progress or 0
+    belt_progress = camera.belt_progress or 0
   end
 
   if target.type == "inserter" then
     -- Calculate a point on the line from drop_position to pickup_position
     local progress = inserter_progress(target)
-    local start_pos = controller.pickup_position or (target.pickup_target and target.pickup_target.position) or target.pickup_position
+    local start_pos = camera.pickup_position or (target.pickup_target and target.pickup_target.position) or target.pickup_position
     local end_pos = (target.drop_target and target.drop_target.position) or target.drop_position
     position = {
       x = end_pos.x + progress * (start_pos.x - end_pos.x),
@@ -434,7 +434,7 @@ function on_tick_player(player, controller)
 
   elseif HAS_TRANSPORT_LINE[target.type] then
     if not info then
-      info = get_line_info(target, controller.index)
+      info = get_line_info(target, camera.index)
     end
     local progress = belt_progress
     if target.type ~= "splitter" then
@@ -482,38 +482,38 @@ function on_tick_player(player, controller)
 
   -- Recalculate inserters if the target changed
   -- Never trust inserters pointing at a train
-  if controller.entity ~= target
+  if camera.entity ~= target
   or target.type == "cargo-wagon"
   or target.type == "artillery-wagon" then
-    controller.grabbers = nil
+    camera.grabbers = nil
   end
 
   -- Find entities that could grab the item next tick
-  if not controller.grabbers then
-    controller.grabbers = find_grabbers(target)
+  if not camera.grabbers then
+    camera.grabbers = find_grabbers(target)
   end
 
   -- Update item count
-  for _, grabber in pairs(controller.grabbers) do
+  for _, grabber in pairs(camera.grabbers) do
     if grabber.entity.valid then
-      if controller.item then
-        grabber.count = grabber.entity.get_item_count(controller.item)
+      if camera.item then
+        grabber.count = grabber.entity.get_item_count(camera.item)
       else
         grabber.count = grabber.entity.get_item_count()
       end
       if grabber.entity.type == "inserter"
       and grabber.entity.held_stack.valid_for_read
-      and grabber.entity.held_stack.name == controller.item then
+      and grabber.entity.held_stack.name == camera.item then
         grabber.count = grabber.entity.held_stack.count
       end
     end
   end
   if target.type == "logistic-container" or target.type == "roboport" then
     -- Delete old robots
-    for i = #controller.grabbers, 1, -1 do
-      if not controller.grabbers[i].entity.valid
-      or IS_ROBOT[controller.grabbers[i].entity.type] then
-        table.remove(controller.grabbers, i)
+    for i = #camera.grabbers, 1, -1 do
+      if not camera.grabbers[i].entity.valid
+      or IS_ROBOT[camera.grabbers[i].entity.type] then
+        table.remove(camera.grabbers, i)
       end
     end
     -- Find new robots
@@ -524,19 +524,19 @@ function on_tick_player(player, controller)
     }
     for _, robot in pairs(robots) do
       if not robot.has_items_inside() then
-        table.insert(controller.grabbers, {entity=robot, count=0})
+        table.insert(camera.grabbers, {entity=robot, count=0})
       end
     end
   end
 
 
   -- Save data for next tick
-  controller.entity = target
-  controller.entity_type = target.type
-  controller.count = dropper_item_count(target, controller.item)
-  controller.belt_progress = belt_progress
+  camera.entity = target
+  camera.entity_type = target.type
+  camera.count = dropper_item_count(target, camera.item)
+  camera.belt_progress = belt_progress
   if target.type ~= "inserter" then
-    controller.pickup_position = nil
+    camera.pickup_position = nil
   end
 
   -- Take screenshots
@@ -620,7 +620,7 @@ function find_grabbers(entity)
   return grabbers
 end
 
-function find_transport_line(entity, controller, position)
+function find_transport_line(entity, camera, position)
   if not HAS_TRANSPORT_LINE[entity.type] then return end
 
   -- TODO: Use inserter drop position to eliminate some lines
@@ -634,25 +634,25 @@ function find_transport_line(entity, controller, position)
 
   for _, index in pairs(indexes) do
     local line = entity.get_transport_line(index)
-    if line.get_item_count(controller.item) > 0 then
-      controller.line = line
-      controller.index = index
-      controller.first_line = true
-      controller.gaps = {}
-      controller.graph = TransportGraph.new(controller.item, entity, line, index)
+    if line.get_item_count(camera.item) > 0 then
+      camera.line = line
+      camera.index = index
+      camera.first_line = true
+      camera.gaps = {}
+      camera.graph = TransportGraph.new(camera.item, entity, line, index)
 
       local info = get_line_info(entity, index)
       if entity.type == "transport-belt" then
-        controller.belt_progress = info.length / 2
+        camera.belt_progress = info.length / 2
       elseif entity.type == "splitter" and index <= 4 then
-        controller.belt_progress = 0.5
+        camera.belt_progress = 0.5
       elseif entity.type == "loader" then
         -- TODO: Make more precise
-        controller.belt_progress = 1
+        camera.belt_progress = 1
       elseif entity.type == "loader-1x1" then
-        controller.belt_progress = 0.5
+        camera.belt_progress = 0.5
       else
-        controller.belt_progress = 0
+        camera.belt_progress = 0
       end
 
       break
@@ -752,8 +752,7 @@ function start_itemcam(player, item, entity, position)
     player.character.walking_state = {walking = false}
   end
 
-  -- Save current controller
-  local controller = {
+  local camera = {
     item = item,
     entity = entity,
     entity_type = entity.type,
@@ -762,8 +761,8 @@ function start_itemcam(player, item, entity, position)
     character_name = player.character and player.character.name,
     count = dropper_item_count(entity, item),
   }
-  find_transport_line(entity, controller, position)
-  global.zoom_controllers[player.index] = controller
+  find_transport_line(entity, camera, position)
+  global.cameras[player.index] = camera
 
   -- Swap to god controller
   if player.controller_type ~= defines.controllers.spectator then
@@ -781,19 +780,19 @@ end
 function exit_itemcam(player)
   player.set_shortcut_toggled("itemcam", false)
 
-  local controller = global.zoom_controllers[player.index]
-  if not controller then return end
+  local camera = global.cameras[player.index]
+  if not camera then return end
 
-  -- Delete controller
-  global.zoom_controllers[player.index] = nil
+  -- Delete camera
+  global.cameras[player.index] = nil
 
   -- Search for a valid character
   local character = nil
-  if controller.controller_type == defines.controllers.character then
-    character = controller.character
+  if camera.controller_type == defines.controllers.character then
+    character = camera.character
     if not character or not character.valid then
-      if controller.character_name and game.entity_prototypes[controller.character_name].type == "character" then
-        character = player.create_character(controller.character_name)
+      if camera.character_name and game.entity_prototypes[camera.character_name].type == "character" then
+        character = player.create_character(camera.character_name)
       else
         character = player.create_character()
       end
@@ -802,7 +801,7 @@ function exit_itemcam(player)
 
   -- Swap back to old controller
   player.set_controller{
-    type = controller.controller_type,
+    type = camera.controller_type,
     character = character,
   }
 end
