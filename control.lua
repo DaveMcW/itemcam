@@ -1,10 +1,11 @@
 -- Entity processing order:
--- 1. Transport belt movement/item transfer
+-- 1. transport-belt
 -- 2. Worker robot movement
 -- 3. Worker robot item transfer
 -- 4. Inserter movement
 -- 5. Inserter item transfer
-
+-- 6. assembling-machine
+-- 7. mining-drill
 
 local util = require "util"
 local TransportGraph = require "lualib.transport-graph"
@@ -169,10 +170,72 @@ function on_tick_player(player, camera)
 
   -- Did we create a new item?
   if not camera.item and IS_CRAFTING_MACHINE[target.type] then
-    camera.item = random_inventory_item(target.get_output_inventory())
+    camera.item = random_item(target.get_output_inventory())
   end
 
-  if not camera.item then
+  if target.type == "mining-drill" then
+    -- Make a list of all mined items
+    local items = {}
+    local resource = target.mining_target
+    if resource then
+      local products = resource.prototype.mineable_properties.products
+      if products then
+        for _, product in pairs(products) do
+          if product.type == "item" then
+            table.insert(items, product.name)
+          end
+        end
+      end
+    end
+    shuffle(items)
+
+    -- Search for mined items in target inventory
+    local drop_target = target.drop_target
+    if drop_target then
+      if IS_CRAFTING_MACHINE[drop_target.type] then
+        -- Search only input inventories
+        local input_inventory = drop_target.get_inventory(defines.inventory.assembling_machine_input)
+        local fuel_inventory = drop_target.get_inventory(defines.inventory.fuel)
+        local rocket_inventory = drop_target.get_inventory(defines.inventory.rocket_silo_rocket)
+        for _, item in pairs(items) do
+          if (input_inventory and input_inventory.get_item_count(item) > 0)
+          or (fuel_inventory and fuel_inventory.get_item_count(item) > 0)
+          or (rocket_inventory and rocket_inventory.get_item_count(item) > 0) then
+            camera.item = nil
+            target = drop_target
+            break
+          end
+        end
+      else
+        -- Search all inventories
+        for _, item in pairs(items) do
+          if drop_target.get_item_count(item) > 0 then
+            camera.item = item
+            find_transport_line(drop_target, camera, target.drop_position)
+            target = drop_target
+            break
+          end
+        end
+      end
+
+    -- Search for mined items on ground
+    else
+      local entities = target.surface.find_entities_filtered{
+        type = "item-entity",
+        position = target.drop_position,
+      }
+      for _, entity in pairs(entities) do
+        for _, item in pairs(items) do
+          if entity.stack.name == item then
+            camera.item = item
+            target = entity
+            break
+          end
+        end
+      end
+    end
+
+  elseif not camera.item then
     -- Wait for a new item to be crafted
 
   -- Did something grab the item from our target?
@@ -307,19 +370,13 @@ function on_tick_player(player, camera)
     end
 
   -- Did the target drop the item somewhere?
-  elseif dropper_item_count(target, camera.item) < camera.count
-  or target.type == "mining-drill" then
-    if target.type == "inserter" or target.type == "mining-drill" then
+  elseif dropper_item_count(target, camera.item) < camera.count then
+    if target.type == "inserter" then
       if target.drop_target then
-        -- Inserter definitely dropped an item, move to target without counting.
-        -- Mining drill might not have dropped an item, so count first.
-        if target.type == "inserter"
-        or target.drop_target.get_item_count(camera.item) > 0 then
-          target = target.drop_target
-          find_transport_line(target, camera, target.drop_position)
-          if IS_CRAFTING_MACHINE[target.type] then
-            camera.item = nil
-          end
+        target = target.drop_target
+        find_transport_line(target, camera, target.drop_position)
+        if IS_CRAFTING_MACHINE[target.type] then
+          camera.item = nil
         end
       else
         -- Search for item on ground
@@ -816,7 +873,7 @@ function select_item(entity, position)
   -- Check output inventory
 
   local inventory = entity.get_output_inventory()
-  local item = random_inventory_item(inventory)
+  local item = random_item(inventory)
   if item then return item end
 
   -- Check more inventories
@@ -839,34 +896,29 @@ function select_item(entity, position)
     end
     for _, i in pairs(indexes) do
       local line = entity.get_transport_line(i)
-      item = random_inventory_item(line)
+      item = random_item(line)
       if item then return item end
     end
     return
 
   elseif IS_ROBOT[entity.type] then
     inventory = entity.get_inventory(defines.inventory.robot_cargo)
-    item = random_inventory_item(inventory)
+    item = random_item(inventory)
     if item then return item end
     inventory = entity.get_inventory(defines.inventory.robot_repair)
-    return random_inventory_item(inventory)
-
-  elseif entity.type == "mining-drill" then
-    local target = entity.mining_target
-    if not target then return end
-    return random_recipe_item(target.prototype.mineable_properties)
+    return random_item(inventory)
 
   elseif entity.type == "roboport" then
     inventory = entity.get_inventory(defines.inventory.roboport_material)
-    return random_inventory_item(inventory)
+    return random_item(inventory)
 
   elseif entity.type == "cargo-wagon" then
     inventory = entity.get_inventory(defines.inventory.cargo_wagon)
-    return random_inventory_item(inventory)
+    return random_item(inventory)
 
   elseif entity.type == "artillery-wagon" then
     inventory = entity.get_inventory(defines.inventory.artillery_wagon_ammo)
-    return random_inventory_item(inventory)
+    return random_item(inventory)
 
   end
 
@@ -882,13 +934,30 @@ function is_crafting_item(entity)
     end
 
   elseif entity.type == "reactor" or entity.type == "burner-generator" then
-    local product = (entity.burner and entity.burner.currently_burning and entity.burner.currently_burning.burnt_result)
-    return (product and product.type == "item")
+    if entity.burner
+    and entity.burner.currently_burning
+    and entity.burner.currently_burning.burnt_result
+    and entity.burner.currently_burning.burnt_result.product
+    and entity.burner.currently_burning.burnt_result.product.type == "item" then
+      return true
+    end
+
+  elseif entity.type == "mining-drill" then
+    local target = entity.mining_target
+    if not target then return end
+    local products = target.prototype.mineable_properties.products
+    if not products then return end
+    for _, product in pairs(products) do
+      if product.type == "item" then
+        return true
+      end
+    end
+
   end
 end
 
---- Return random item from the inventory.
-function random_inventory_item(inventory)
+--- Return random item from the inventory
+function random_item(inventory)
   if not inventory then return end
   if inventory.get_item_count() == 0 then return end
 
@@ -901,24 +970,6 @@ function random_inventory_item(inventory)
   for i = 1, start-1 do
     if inventory[i].valid_for_read then
       return inventory[i].name
-    end
-  end
-end
-
---- Return random item from the recipe.
-function random_recipe_item(recipe)
-  local products = recipe.products
-  if not products then return end
-
-  local start = math.random(#products)
-  for i = start, #products do
-    if products[i].type == "item" then
-      return products[i].name
-    end
-  end
-  for i = 1, start-1 do
-    if products[i].type == "item" then
-      return products[i].name
     end
   end
 end
