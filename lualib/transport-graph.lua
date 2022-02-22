@@ -257,15 +257,17 @@ local function get_side_merge(input, output)
 
   -- Find merge position by comparing it to an inner/outer curve
   local position = 0.99609375
+  local new_capacity = 4
   if output.belt.type == "transport-belt"
   and CURVE_TYPE[input.belt.direction][output.belt.direction][input.index] == "inner" then
     position = 0.49609375
-    output.capacity = 2
+    new_capacity = 2
   end
 
   -- Find the second input belt that we are merging with
   for _, belt in pairs(output.belt.belt_neighbours.inputs) do
     if belt.direction == output.belt.direction then
+      output.capacity = new_capacity
       return position
     end
   end
@@ -297,6 +299,17 @@ local function conveyor_has_gap(conveyor)
 
   -- Count items
   if #conveyor.line < conveyor.capacity then
+    if DEBUG then
+      game.print(#conveyor.line .. " < " .. conveyor.capacity .. tostring(conveyor.curve_type):sub(1,1) .. " " .. tostring(conveyor.curve_type))
+      rendering.draw_circle{
+        surface = conveyor.belt.surface,
+        target = conveyor.belt,
+        color = {r=1, g=0, b=1, a=1},
+        radius = 0.2,
+        width = 2,
+        time_to_live = 300,
+      }
+    end
     return true
   end
 
@@ -424,7 +437,15 @@ local function expand_edge(graph, edge, limit)
             color = {r=0, g=1, b=0, a=1},
             radius = 0.4,
             width = 2,
-            time_to_live = 600,
+            time_to_live = 300,
+          }
+          rendering.draw_text{
+            surface = conveyor.belt.surface,
+            target = conveyor.belt,
+            target_offset = {-0.1, -0.3},
+            text = conveyor.capacity .. tostring(conveyor.curve_type):sub(1,1),
+            color = {r=0, g=1, b=0, a=1},
+            time_to_live = 300,
           }
         end
 
