@@ -30,6 +30,10 @@ local DY = {
   [defines.direction.south] = 1,
   [defines.direction.west] = 0,
 }
+local IS_LOADER = {
+  ["loader"] = true,
+  ["loader-1x1"] = true,
+}
 -- CURVE_TYPE[input_direction][output_direction][line_index]
 local CURVE_TYPE = {
   [defines.direction.north] = {
@@ -300,7 +304,6 @@ local function conveyor_has_gap(conveyor)
   -- Count items
   if #conveyor.line < conveyor.capacity then
     if DEBUG then
-      game.print(#conveyor.line .. " < " .. conveyor.capacity .. tostring(conveyor.curve_type):sub(1,1) .. " " .. tostring(conveyor.curve_type))
       rendering.draw_circle{
         surface = conveyor.belt.surface,
         target = conveyor.belt,
@@ -334,18 +337,29 @@ local function conveyor_has_gap(conveyor)
 
   if conveyor.capacity == 4 then
     -- Test 4 possible gap positions
-      return conveyor.line.can_insert_at(0.375)
+    return conveyor.line.can_insert_at(0.375)
       or conveyor.line.can_insert_at(0.625)
       or conveyor.line.can_insert_at(0.125)
       or conveyor.line.can_insert_at(0.875)
   end
 
   -- Splitter has extra gaps built in, ignore them
-  if conveyor.belt.type == "splitter" then
+  if conveyor.belt.type == "splitter" or IS_LOADER[conveyor.belt.type] then
     return false
   end
 
   -- Test 2 possible gap positions
+  if(conveyor.line.can_insert_at(0.125)
+    or conveyor.line.can_insert_at(0.375)) then
+      rendering.draw_circle{
+        surface = conveyor.belt.surface,
+        target = conveyor.belt,
+        color = {r=1, g=0, b=1, a=1},
+        radius = 0.2,
+        width = 2,
+        time_to_live = 300,
+      }
+    end
   return conveyor.line.can_insert_at(0.125)
     or conveyor.line.can_insert_at(0.375)
 end
@@ -437,14 +451,6 @@ local function expand_edge(graph, edge, limit)
             color = {r=0, g=1, b=0, a=1},
             radius = 0.4,
             width = 2,
-            time_to_live = 300,
-          }
-          rendering.draw_text{
-            surface = conveyor.belt.surface,
-            target = conveyor.belt,
-            target_offset = {-0.1, -0.3},
-            text = conveyor.capacity .. tostring(conveyor.curve_type):sub(1,1),
-            color = {r=0, g=1, b=0, a=1},
             time_to_live = 300,
           }
         end
