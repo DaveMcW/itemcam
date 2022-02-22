@@ -12,6 +12,8 @@ local util = require "util"
 
   if we reach an already-pruned splitter, rebuild the map.
 
+  handle circuit controlled belts
+
 --]]
 
 local DEBUG = true
@@ -336,13 +338,13 @@ local function conveyor_has_gap(conveyor)
 end
 
 --- Follow the edge of the graph
----@return boolean true if a gap is found or the limit is reached
+---@return boolean true if a gap is found
 local function expand_edge(graph, edge, limit)
   while edge.middle do
 
     -- Limit search rate
     if graph.count >= limit then
-      return true
+      return graph.result_at_limit
     end
     graph.count = graph.count + 1
 
@@ -474,10 +476,6 @@ local function edge_has_gap(graph, edge, limit)
     return edge.head
   end
 
-  if edge.head.belt.unit_number == 14860 then
-
-  end
-
   -- Recursively check the downstream edges
 
   if #edge.outputs == 0 then
@@ -532,9 +530,44 @@ function M.new(item, belt, line, index)
     item = item,
     current_conveyor = new_conveyor(belt, line, index),
     edges = {},
+    result_at_limit = true,
   }
   graph.current_edge = add_edge(graph, graph.current_conveyor)
   graph.current_edge.middle.is_start = true
+  return graph
+end
+
+function M.new_from_loader(item, container, loader)
+  local graph = {
+    item = item,
+    edges = {},
+    result_at_limit = false,
+  }
+
+  -- The first edge is a fake conveyor made from the container
+  graph.current_conveyor = {
+    belt = container,
+    line = container,
+    index = 0,
+    capacity = 0,
+    is_start = true,
+  }
+  graph.current_edge = add_edge(graph, graph.current_conveyor)
+  graph.current_edge.tail = graph.current_edge.middle
+  graph.current_edge.middle = nil
+
+  -- Shuffle lanes
+  local index = math.random(2)
+
+  -- The output edges are the lanes of the loader
+  table.insert(graph.current_edge.outputs, add_edge(
+    graph,
+    new_conveyor(loader, loader.get_transport_line(index), index)
+  ))
+  table.insert(graph.current_edge.outputs, add_edge(
+    graph,
+    new_conveyor(loader, loader.get_transport_line(3-index), 3-index)
+  ))
   return graph
 end
 

@@ -252,10 +252,16 @@ function on_tick_player(player, camera)
           target = entity
           break
         elseif IS_ROBOT[entity.type]
-        and entity.get_item_count(camera.item) > 0
+        and entity.get_item_count(camera.item) > grabber.count
         and entity.position.x == target.position.x
         and entity.position.y == target.position.y then
           target = entity
+          break
+        elseif IS_LOADER[entity.type]
+        and entity.get_item_count(camera.item) > 0
+        and TransportGraph.has_gap(grabber.graph) then
+          target = entity
+          find_transport_line(target, camera, nil)
           break
         end
       end
@@ -544,25 +550,21 @@ function on_tick_player(player, camera)
 
   -- Find entities that could grab the item next tick
   if not camera.grabbers then
-    camera.grabbers = find_grabbers(target)
+    camera.grabbers = find_grabbers(camera, target)
   end
 
   -- Update item count
   for _, grabber in pairs(camera.grabbers) do
+    grabber.count = 0
     local entity = grabber.entity
-    if entity.valid then
-      grabber.count = 0
-      if camera.item then
-        if entity.type == "inserter"
-        and entity.held_stack.valid_for_read
-        and entity.held_stack.name == camera.item then
-          grabber.count = entity.held_stack.count
-        else
-          grabber.count = entity.get_item_count(camera.item)
-        end
-      end
+    if entity.valid
+    and entity.type == "inserter"
+    and entity.held_stack.valid_for_read
+    and entity.held_stack.name == camera.item then
+      grabber.count = entity.held_stack.count
     end
   end
+
   if target.type == "logistic-container" or target.type == "roboport" then
     -- Delete old robots
     for i = #camera.grabbers, 1, -1 do
@@ -625,7 +627,7 @@ function find_picking_inserter(entity, item)
   end
 end
 
-function find_grabbers(entity)
+function find_grabbers(camera, entity)
   local grabbers = {}
 
   -- Inserters pulling from output inventory
@@ -668,9 +670,20 @@ function find_grabbers(entity)
     end
   end
 
-  shuffle(grabbers)
+  -- Loaders
+  local loaders = entity.surface.find_entities_filtered{
+    area = expand_box(entity.bounding_box, 1),
+    type = {"loader", "loader-1x1"},
+    force = entity.force,
+  }
+  for _, loader in pairs(loaders) do
+    if loader.loader_container == entity and loader.loader_type == "output" then
+      local graph = TransportGraph.new_from_loader(camera.item, entity, loader)
+      table.insert(grabbers, {entity=loader, graph=graph})
+    end
+  end
 
-  -- TODO: Loaders
+  shuffle(grabbers)
 
   return grabbers
 end
@@ -693,21 +706,17 @@ function find_transport_line(entity, camera, position)
       camera.line = line
       camera.index = index
       camera.first_line = true
-      camera.gaps = {}
       camera.graph = TransportGraph.new(camera.item, entity, line, index)
+      camera.belt_progress = 0
 
+      -- TODO: Make more precise
       local info = get_line_info(entity, index)
       if entity.type == "transport-belt" then
         camera.belt_progress = info.length / 2
       elseif entity.type == "splitter" and index <= 4 then
         camera.belt_progress = 0.5
-      elseif entity.type == "loader" then
-        -- TODO: Make more precise
-        camera.belt_progress = 1
-      elseif entity.type == "loader-1x1" then
+      elseif IS_LOADER[entity.type] and entity.loader_type == "input" then
         camera.belt_progress = 0.5
-      else
-        camera.belt_progress = 0
       end
 
       break
@@ -927,9 +936,10 @@ end
 --- Is the entity crafting or burning a recipe that outputs an item?
 function is_crafting_item(entity)
   if entity.type == "assembling-machine" or entity.type == "furnace" then
-    if entity.is_crafting() then
-      for _, product in pairs(entity.get_recipe().products) do
-        if product.type == "item" then return true end
+    if not entity.is_crafting() then return end
+    for _, product in pairs(entity.get_recipe().products) do
+      if product.type == "item" then
+        return true
       end
     end
 
@@ -943,17 +953,17 @@ function is_crafting_item(entity)
     end
 
   elseif entity.type == "mining-drill" then
-    local target = entity.mining_target
-    if not target then return end
-    local products = target.prototype.mineable_properties.products
+    local mining_target = entity.mining_target
+    if not mining_target then return end
+    local products = mining_target.prototype.mineable_properties.products
     if not products then return end
     for _, product in pairs(products) do
       if product.type == "item" then
         return true
       end
     end
-
   end
+
 end
 
 --- Return random item from the inventory
