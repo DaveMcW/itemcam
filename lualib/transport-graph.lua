@@ -4,15 +4,17 @@ local util = require "util"
 --[[
   Ideas not yet implemented:
 
-  grabbers in a circular branch are unpruneable
+  Grabbers in a circular branch are unpruneable
 
   2:1 splitter inputs should move at half speed
 
-  https://en.wikipedia.org/wiki/Tarjan%27s_strongly_connected_components_algorithm
+  Temporarily cache non-side-merge sinks in one table
 
-  if we reach an already-pruned splitter, rebuild the map.
+  Handle circuit controlled belts
 
-  handle circuit controlled belts
+  Handle belts marked for deconstruction
+
+  Rebuild graph if any entity is destroyed
 
 --]]
 
@@ -525,8 +527,9 @@ local function edge_has_gap(graph, edge, limit)
     -- Ideally we would spend 50% of the limit searching each path.
     -- But if one path terminates early, we want to spend 100% of the limit
     -- searching the other path.
-    -- So 75% on the first path is a compromise.
-    local result1 = edge_has_gap(graph, edge.outputs[1], math.ceil((limit - graph.count) * 0.75))
+    -- So 67% on the first path is a compromise.
+    -- TODO: Find a way to spend 100% of the limit efficiently
+    local result1 = edge_has_gap(graph, edge.outputs[1], math.ceil((limit - graph.count) * 0.67))
     local result2 = edge_has_gap(graph, edge.outputs[2], limit)
     if result1 and result2 then
       -- Avoid favoring one side of a splitter
