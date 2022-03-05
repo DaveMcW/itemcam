@@ -52,6 +52,25 @@ local DY = {
   [defines.direction.west] = 0,
 }
 local SPLITTER_SIDE = {-0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 0.5, 0.5}
+local ROTATE_DIRECTION = {
+  [defines.direction.north] = {
+    [defines.direction.east] = 1,
+    [defines.direction.west] = -1,
+  },
+  [defines.direction.east] = {
+    [defines.direction.north] = -1,
+    [defines.direction.south] = 1,
+  },
+  [defines.direction.south] = {
+    [defines.direction.east] = -1,
+    [defines.direction.west] = 1,
+  },
+  [defines.direction.west] = {
+    [defines.direction.north] = 1,
+    [defines.direction.south] = -1,
+  },
+}
+
 
 function on_init()
   global.cameras = {}
@@ -504,11 +523,35 @@ function on_tick_player(player, camera)
     if target.type ~= "splitter" then
       progress = belt_progress / info.length
     end
-    -- Calculate a point on the transport line
+
+    -- Calculate a point on a straight line
     position = {
       x = info.start_pos.x + progress * (info.end_pos.x - info.start_pos.x),
       y = info.start_pos.y + progress * (info.end_pos.y - info.start_pos.y),
     }
+
+    -- Calculate a point on a circle
+    if info.input_direction ~= target.direction then
+      local radius = math.abs(info.end_pos.x - info.start_pos.x)
+      local center = {
+        x = info.start_pos.x + DX[target.direction] * radius,
+        y = info.start_pos.y + DY[target.direction] * radius,
+      }
+      if DEBUG then
+        rendering.draw_circle{
+          surface = target.surface,
+          target = center,
+          color = {r=1, g=0.6, b=0},
+          radius = 0.1,
+          width = 2,
+          time_to_live = 2,
+        }
+      end
+      local rotation = ROTATE_DIRECTION[info.input_direction][target.direction]
+      local angle = (progress * rotation + 0.5 * target.direction) * 0.5 * math.pi
+      position.x = center.x - radius * math.sin(angle)
+      position.y = center.y + radius * math.cos(angle)
+    end
 
     if DEBUG then
       rendering.draw_circle{
@@ -1146,6 +1189,7 @@ function get_line_info(belt, index)
     start_pos = start_pos,
     end_pos = end_pos,
     length = length,
+    input_direction = belt_info.input_direction,
   }
 end
 
