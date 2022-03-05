@@ -296,7 +296,7 @@ local function conveyor_has_gap(conveyor)
     rendering.draw_circle{
       surface = conveyor.belt.surface,
       target = conveyor.belt,
-      color = {r=0, g=0, b=1, a=1},
+      color = {r=0, g=0, b=1},
       radius = 0.3,
       width = 2,
       time_to_live = 2,
@@ -309,7 +309,7 @@ local function conveyor_has_gap(conveyor)
       rendering.draw_circle{
         surface = conveyor.belt.surface,
         target = conveyor.belt,
-        color = {r=1, g=0, b=1, a=1},
+        color = {r=1, g=0, b=1},
         radius = 0.2,
         width = 2,
         time_to_live = 300,
@@ -356,7 +356,7 @@ local function conveyor_has_gap(conveyor)
       rendering.draw_circle{
         surface = conveyor.belt.surface,
         target = conveyor.belt,
-        color = {r=1, g=0, b=1, a=1},
+        color = {r=1, g=0, b=1},
         radius = 0.2,
         width = 2,
         time_to_live = 300,
@@ -450,7 +450,7 @@ local function expand_edge(graph, edge, limit)
           rendering.draw_circle{
             surface = conveyor.belt.surface,
             target = conveyor.belt,
-            color = {r=0, g=1, b=0, a=1},
+            color = {r=0, g=1, b=0},
             radius = 0.4,
             width = 2,
             time_to_live = 300,

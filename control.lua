@@ -480,7 +480,7 @@ function on_tick_player(player, camera)
       rendering.draw_circle{
         surface = target.surface,
         target = start_pos,
-        color = {r=1, g=0, b=0, a=1},
+        color = {r=1, g=0, b=0},
         radius = 0.2,
         width = 2,
         time_to_live = 2,
@@ -488,7 +488,7 @@ function on_tick_player(player, camera)
       rendering.draw_circle{
         surface = target.surface,
         target = end_pos,
-        color = {r=1, g=1, b=0, a=1},
+        color = {r=1, g=1, b=0},
         radius = 0.2,
         width = 2,
         time_to_live = 2,
@@ -514,7 +514,7 @@ function on_tick_player(player, camera)
       rendering.draw_circle{
         surface = target.surface,
         target = info.start_pos,
-        color = {r=1, g=0, b=0, a=1},
+        color = {r=1, g=0, b=0},
         radius = 0.2,
         width = 2,
         time_to_live = 2,
@@ -522,7 +522,7 @@ function on_tick_player(player, camera)
       rendering.draw_circle{
         surface = target.surface,
         target = info.end_pos,
-        color = {r=1, g=1, b=0, a=1},
+        color = {r=1, g=1, b=0},
         radius = 0.2,
         width = 2,
         time_to_live = 2,
@@ -537,7 +537,7 @@ function on_tick_player(player, camera)
     rendering.draw_circle{
       surface = target.surface,
       target = position,
-      color = {r=1, g=1, b=1, a=1},
+      color = {r=1, g=1, b=1},
       radius = 0.0005,
       width = 1,
       time_to_live = 120,
