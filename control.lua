@@ -364,12 +364,16 @@ function on_tick_player(player, camera)
               end
             end
             -- Move to new transport line
+            info = nil
             target = owner
             camera.line = output_line
             camera.index = get_line_index(target, output_line)
             camera.first_line = nil
-            TransportGraph.move_to(camera.graph, target, output_line, camera.index)
-            info = nil
+            local side_merge = TransportGraph.move_to(camera.graph, target, output_line, camera.index)
+            if side_merge then
+              -- Advance to side merge position
+              camera.belt_progress = 1 - side_merge
+            end
           end
         end
       end
@@ -885,26 +889,53 @@ function select_item(entity, position)
   local item = random_item(inventory)
   if item then return item end
 
-  -- Check more inventories
+  -- Check inserter hand
 
   if entity.type == "inserter" then
     if not entity.held_stack.valid_for_read then return end
     return entity.held_stack.name
+  end
 
-  elseif HAS_TRANSPORT_LINE[entity.type] then
+  -- Check more inventories
+
+  if not entity.has_items_inside() then
+    return
+  end
+
+  if HAS_TRANSPORT_LINE[entity.type] then
+    -- Start with transport lines in a random order
     local indexes = {}
     for i = 1, entity.get_max_transport_line_index() do
-      table.insert(indexes, i)
+      table.insert(indexes, {index=i, distance=0})
     end
+    shuffle(indexes)
+
+    -- Sort transport lines by distance from selected position
     if position then
-      -- Pick the line closest to the selection point
-      -- TODO: Implement
-    else
-      -- Pick a random line
-      shuffle(indexes)
+      for _, row in pairs(indexes) do
+        local info = get_line_info(entity, row.index)
+        local line_pos = {
+          x = (info.start_pos.x + info.end_pos.x) / 2,
+          y = (info.start_pos.y + info.end_pos.y) / 2,
+        }
+        if DEBUG then
+          rendering.draw_circle{
+            surface = entity.surface,
+            target = line_pos,
+            color = {r=1, g=0.7, b=0},
+            radius = 0.1,
+            width = 2,
+            time_to_live = 300,
+          }
+        end
+        row.distance = cmp_dist(position, line_pos)
+      end
+      table.sort(indexes, function (a, b) return a.distance < b.distance end)
     end
-    for _, i in pairs(indexes) do
-      local line = entity.get_transport_line(i)
+
+    -- Pick the closest transport line
+    for _, row in pairs(indexes) do
+      local line = entity.get_transport_line(row.index)
       item = random_item(line)
       if item then return item end
     end

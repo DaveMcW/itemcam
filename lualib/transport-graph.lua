@@ -601,7 +601,11 @@ function M.new_from_loader(item, container, loader)
   return graph
 end
 
+--- Update the transport graph position
+---@return number|nil position belt position of side merge, if it exists
 function M.move_to(graph, belt, line, index)
+  local side_merge = nil
+
   -- Find new edge
   if graph.current_edge.tail
   and graph.current_edge.tail.line.valid
@@ -610,6 +614,7 @@ function M.move_to(graph, belt, line, index)
     for _, edge in pairs(graph.current_edge.outputs) do
       if edge.head.line.valid and edge.head.line == line then
         graph.current_edge = edge
+        side_merge = edge.side_merge
         break
       end
     end
@@ -623,6 +628,8 @@ function M.move_to(graph, belt, line, index)
   if graph.current_edge.sinks[belt.unit_number] then
     graph.current_edge.sinks[belt.unit_number].disabled = true
   end
+
+  return side_merge
 end
 
 --- Is there a belt gap somewhere downstream?
