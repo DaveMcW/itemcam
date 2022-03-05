@@ -372,7 +372,7 @@ function on_tick_player(player, camera)
             local side_merge = TransportGraph.move_to(camera.graph, target, output_line, camera.index)
             if side_merge then
               -- Advance to side merge position
-              camera.belt_progress = 1 - side_merge
+              camera.belt_progress = 1.2 - side_merge
             end
           end
         end
@@ -695,16 +695,8 @@ end
 function find_transport_line(entity, camera, position)
   if not HAS_TRANSPORT_LINE[entity.type] then return end
 
-  -- TODO: Use inserter drop position to eliminate some lines
-
-  -- Pick a random line
-  local indexes = {}
-  for i = 1, entity.get_max_transport_line_index() do
-    table.insert(indexes, i)
-  end
-  shuffle(indexes)
-
-  for _, index in pairs(indexes) do
+  for _, row in pairs(sort_line_indexes(entity, position)) do
+    local index = row.index
     local line = entity.get_transport_line(index)
     if line.get_item_count(camera.item) > 0 then
       camera.line = line
@@ -713,7 +705,6 @@ function find_transport_line(entity, camera, position)
       camera.graph = TransportGraph.new(camera.item, entity, line, index)
       camera.belt_progress = 0
 
-      -- TODO: Make more precise
       local info = get_line_info(entity, index)
       if entity.type == "transport-belt" then
         camera.belt_progress = info.length / 2
@@ -726,6 +717,41 @@ function find_transport_line(entity, camera, position)
       break
     end
   end
+end
+
+--- Return a list of transport line indexes sorted by distance from position,
+--- or sorted randomly if position is nil.
+function sort_line_indexes(belt, position)
+  -- Start with transport lines in a random order
+  local indexes = {}
+  for i = 1, belt.get_max_transport_line_index() do
+    table.insert(indexes, {index=i, distance=0})
+  end
+  shuffle(indexes)
+
+  -- Sort transport lines by distance from selected position
+  if position then
+    for _, row in pairs(indexes) do
+      local info = get_line_info(belt, row.index)
+      local line_pos = {
+        x = (info.start_pos.x + info.end_pos.x) / 2,
+        y = (info.start_pos.y + info.end_pos.y) / 2,
+      }
+      if belt.type == "splitter" then
+        if row.index <= 4 then
+          line_pos.x = line_pos.x - 0.25 * DX[belt.direction]
+          line_pos.y = line_pos.y - 0.25 * DY[belt.direction]
+        else
+          line_pos.x = line_pos.x + 0.25 * DX[belt.direction]
+          line_pos.y = line_pos.y + 0.25 * DY[belt.direction]
+        end
+      end
+      row.distance = cmp_dist(position, line_pos)
+    end
+    table.sort(indexes, function (a, b) return a.distance < b.distance end)
+  end
+
+  return indexes
 end
 
 function get_output_lines(belt, line, index)
@@ -903,38 +929,7 @@ function select_item(entity, position)
   end
 
   if HAS_TRANSPORT_LINE[entity.type] then
-    -- Start with transport lines in a random order
-    local indexes = {}
-    for i = 1, entity.get_max_transport_line_index() do
-      table.insert(indexes, {index=i, distance=0})
-    end
-    shuffle(indexes)
-
-    -- Sort transport lines by distance from selected position
-    if position then
-      for _, row in pairs(indexes) do
-        local info = get_line_info(entity, row.index)
-        local line_pos = {
-          x = (info.start_pos.x + info.end_pos.x) / 2,
-          y = (info.start_pos.y + info.end_pos.y) / 2,
-        }
-        if DEBUG then
-          rendering.draw_circle{
-            surface = entity.surface,
-            target = line_pos,
-            color = {r=1, g=0.7, b=0},
-            radius = 0.1,
-            width = 2,
-            time_to_live = 300,
-          }
-        end
-        row.distance = cmp_dist(position, line_pos)
-      end
-      table.sort(indexes, function (a, b) return a.distance < b.distance end)
-    end
-
-    -- Pick the closest transport line
-    for _, row in pairs(indexes) do
+    for _, row in pairs(sort_line_indexes(entity, position)) do
       local line = entity.get_transport_line(row.index)
       item = random_item(line)
       if item then return item end
