@@ -35,6 +35,12 @@ local IS_LOADER = {
   ["loader"] = true,
   ["loader-1x1"] = true,
 }
+local SHOOTS_PROJECTILES = {
+  ["ammo-turret"] = true,
+  ["car"] = true,
+  ["character"] = true,
+  ["spider-vehicle"] = true,
+}
 local IS_ALLOWED_CONTROLLER = {
   [defines.controllers.god] = true,
   [defines.controllers.spectator] = true,
@@ -157,6 +163,36 @@ function on_player_selected_area(event)
       -- Enter itemcam mode
       start_itemcam(player, item, entity, center)
       return
+    end
+  end
+end
+
+function on_script_trigger_effect(event)
+  local projectile = event.source_entity
+  if not projectile then return end
+  if not projectile.valid then return end
+  if not projectile.type == "projectile" then return end
+
+  for _, camera in pairs(global.cameras) do
+    -- Did the entity we are watching launch this projectile?
+    if camera.entity.valid
+    and SHOOTS_PROJECTILES[camera.entity.type]
+    and camera.item then
+      local ammo_type = game.item_prototypes[camera.item].get_ammo_type("default")
+      if ammo_type and ammo_type.action then
+        for _, action in pairs(ammo_type.action) do
+          for _, delivery in pairs(action.action_delivery) do
+            if delivery.projectile == projectile.name
+            and cmp_dist(camera.entity.position, projectile.position) < 1 then
+              -- Follow projectile
+              camera.entity = projectile
+              camera.grabbers = nil
+              camera.item = nil
+              return
+            end
+          end
+        end
+      end
     end
   end
 end
@@ -423,7 +459,7 @@ function on_tick_player(player, camera)
 
     elseif target.type == "logistic-robot" then
       local found = target.surface.find_entities_filtered{
-        type = "logistic-container",
+        type = {"logistic-container", "character", "spider-vehicle"},
         position = target.position,
         force = target.force,
         limit = 1,
@@ -537,16 +573,6 @@ function on_tick_player(player, camera)
         x = info.start_pos.x + DX[target.direction] * radius,
         y = info.start_pos.y + DY[target.direction] * radius,
       }
-      if DEBUG then
-        rendering.draw_circle{
-          surface = target.surface,
-          target = center,
-          color = {r=1, g=0.6, b=0},
-          radius = 0.1,
-          width = 2,
-          time_to_live = 2,
-        }
-      end
       local rotation = ROTATE_DIRECTION[info.input_direction][target.direction]
       local angle = (progress * rotation + 0.5 * target.direction) * 0.5 * math.pi
       position.x = center.x - radius * math.sin(angle)
@@ -1227,5 +1253,7 @@ script.on_event(defines.events.on_runtime_mod_setting_changed, on_runtime_mod_se
 script.on_event(defines.events.on_tick, on_tick)
 script.on_event(defines.events.on_player_selected_area, on_player_selected_area)
 script.on_event(defines.events.on_player_alt_selected_area, on_player_selected_area)
+script.on_event(defines.events.on_script_trigger_effect, on_script_trigger_effect)
 script.on_event(defines.events.on_lua_shortcut, on_lua_shortcut)
 commands.add_command("itemcam", {"command-help.itemcam"}, on_console_command)
+
