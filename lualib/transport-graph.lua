@@ -351,7 +351,8 @@ local function conveyor_has_gap(conveyor)
   end
 
   -- Test 2 possible gap positions
-  if(conveyor.line.can_insert_at(0.125)
+  if DEBUG then
+    if(conveyor.line.can_insert_at(0.125)
     or conveyor.line.can_insert_at(0.375)) then
       rendering.draw_circle{
         surface = conveyor.belt.surface,
@@ -362,6 +363,7 @@ local function conveyor_has_gap(conveyor)
         time_to_live = 300,
       }
     end
+  end
   return conveyor.line.can_insert_at(0.125)
     or conveyor.line.can_insert_at(0.375)
 end
