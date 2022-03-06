@@ -11,7 +11,7 @@ local util = require "util"
 local TransportGraph = require "lualib.transport-graph"
 
 -- Constants
-local DEBUG = true
+local DEBUG = false
 local HAS_TRANSPORT_LINE = {
   ["transport-belt"] = true,
   ["underground-belt"] = true,
@@ -118,7 +118,6 @@ end
 
 function on_console_command(event)
   if event.player_index == nil then return end
-
   local player = game.get_player(event.player_index)
 
   -- Exit itemcam mode
@@ -130,7 +129,7 @@ function on_console_command(event)
   -- Enter itemcam mode
   if player.selected then
     local item = select_item(player.selected)
-    if item or is_crafting_item(entity) then
+    if item or is_crafting_item(player.selected) then
       start_itemcam(player, item, player.selected, nil)
       return
     end
@@ -146,9 +145,6 @@ end
 function on_player_selected_area(event)
   if event.item ~= "itemcam" then return end
 
-  -- Player selected an entity to follow
-  local player = game.get_player(event.player_index)
-
   -- Sort entities by distance from selection center
   local entities = event.entities
   local center = {
@@ -161,6 +157,7 @@ function on_player_selected_area(event)
     local item = select_item(entity, center)
     if item or is_crafting_item(entity) then
       -- Enter itemcam mode
+      local player = game.get_player(event.player_index)
       start_itemcam(player, item, entity, center)
       return
     end
@@ -168,6 +165,8 @@ function on_player_selected_area(event)
 end
 
 function on_script_trigger_effect(event)
+  if event.effect_id ~= "itemcam-projectile-created" then return end
+
   local projectile = event.source_entity
   if not projectile then return end
   if not projectile.valid then return end
@@ -183,7 +182,7 @@ function on_script_trigger_effect(event)
         for _, action in pairs(ammo_type.action) do
           for _, delivery in pairs(action.action_delivery) do
             if delivery.projectile == projectile.name
-            and cmp_dist(camera.entity.position, projectile.position) < 1 then
+            and util.distance(camera.entity.position, projectile.position) < 1 then
               -- Follow projectile
               camera.entity = projectile
               camera.grabbers = nil
@@ -659,7 +658,6 @@ function on_tick_player(player, camera)
     end
   end
 
-
   -- Save data for next tick
   camera.entity = target
   camera.entity_type = target.type
@@ -883,25 +881,6 @@ function inserter_progress(inserter)
   return math.abs(angle)
 end
 
-function expand_box(box, extra_tiles)
-  local result = util.table.deepcopy(box)
-  result.left_top.x = result.left_top.x - extra_tiles
-  result.left_top.y = result.left_top.y - extra_tiles
-  result.right_bottom.x = result.right_bottom.x + extra_tiles
-  result.right_bottom.y = result.right_bottom.y + extra_tiles
-  return result
-end
-
-function tile_box(box)
-  -- Select every tile in the box, with a 1 pixel (1/256 tile) margin
-  local result = util.table.deepcopy(box)
-  result.left_top.x = math.floor(result.left_top.x) + 0.00390625
-  result.left_top.y = math.floor(result.left_top.y) + 0.00390625
-  result.right_bottom.x = math.ceil(result.right_bottom.x) - 0.00390625
-  result.right_bottom.y = math.ceil(result.right_bottom.y) - 0.00390625
-  return result
-end
-
 function start_itemcam(player, item, entity, position)
   player.set_shortcut_toggled("itemcam", true)
 
@@ -967,6 +946,25 @@ function exit_itemcam(player)
     type = camera.controller_type,
     character = character,
   }
+end
+
+function expand_box(box, extra_tiles)
+  local result = util.table.deepcopy(box)
+  result.left_top.x = result.left_top.x - extra_tiles
+  result.left_top.y = result.left_top.y - extra_tiles
+  result.right_bottom.x = result.right_bottom.x + extra_tiles
+  result.right_bottom.y = result.right_bottom.y + extra_tiles
+  return result
+end
+
+function tile_box(box)
+  -- Select every tile in the box, with a 1 pixel (1/256 tile) margin
+  local result = util.table.deepcopy(box)
+  result.left_top.x = math.floor(result.left_top.x) + 0.00390625
+  result.left_top.y = math.floor(result.left_top.y) + 0.00390625
+  result.right_bottom.x = math.ceil(result.right_bottom.x) - 0.00390625
+  result.right_bottom.y = math.ceil(result.right_bottom.y) - 0.00390625
+  return result
 end
 
 --- Calculate a distance value using Pythagorean theorem.

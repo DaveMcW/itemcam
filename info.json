@@ -5,6 +5,6 @@
   "title":"Item Cam",
   "homepage":"",
   "description":"Follow an item around your base, like in the Factorio trailer.",
-  "dependencies": ["base"],
+  "dependencies": ["base >= 1.1.53"],
   "factorio_version": "1.1"
 }

@@ -18,7 +18,7 @@ local util = require "util"
 
 --]]
 
-local DEBUG = true
+local DEBUG = false
 local DX = {
   [defines.direction.north] = 0,
   [defines.direction.east] = 1,
