@@ -1,6 +1,6 @@
 Follow an item around your base, like in the Factorio trailer.
 
-### GUI Instructions ###
+### Toolbar Instructions ###
 
 1. Add the Item Cam shortcut button to your toolbar.
 2. Click the Item Cam button.
@@ -17,4 +17,3 @@ Follow an item around your base, like in the Factorio trailer.
 ### Known issues ###
 
 * The mod has poor performance on backed up belts. And it is boring to watch an item sit on a belt without moving, so try to avoid them.
-
